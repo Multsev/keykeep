@@ -57,9 +57,9 @@ flutter build apk "${build_args[@]}"
 apk="build/app/outputs/flutter-apk/app-release.apk"
 artifact="KeyKeep-v$release.apk"
 checksum="$artifact.sha256"
-mkdir -p releases
-cp "$apk" "releases/$artifact"
-shasum -a 256 "releases/$artifact" > "releases/$checksum"
+mkdir -p Release
+cp "$apk" "Release/$artifact"
+shasum -a 256 "Release/$artifact" > "Release/$checksum"
 
 create_disk_folder() {
   local path="$1"
@@ -84,7 +84,7 @@ upload_artifact() {
   local response href
   response="$(curl --fail --silent --show-error -H "Authorization: OAuth $YANDEX_DISK_TOKEN" --get --data-urlencode "path=app:/$YANDEX_DISK_FOLDER/$name" --data-urlencode "overwrite=true" "https://cloud-api.yandex.net/v1/disk/resources/upload")"
   href="$(printf '%s' "$response" | plutil -extract href raw -)"
-  curl --fail --silent --show-error --upload-file "releases/$name" "$href"
+  curl --fail --silent --show-error --upload-file "Release/$name" "$href"
 }
 
 upload_artifact "$artifact"

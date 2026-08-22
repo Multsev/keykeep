@@ -50,5 +50,6 @@ app.*.map.json
 # Release credentials and locally staged distributables
 .env
 /releases/
+/Release/
 *.jks
 *.keystore
