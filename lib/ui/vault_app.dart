@@ -12,6 +12,7 @@ import 'package:keykeep_passwords/domain/vault_folder.dart';
 import 'package:keykeep_passwords/services/kdbx_vault_codec.dart';
 import 'package:keykeep_passwords/services/yandex_disk_oauth.dart';
 import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
+import 'package:keykeep_passwords/services/password_mcp_controller.dart';
 import 'package:keykeep_passwords/ui/password_editor.dart';
 
 class VaultApp extends StatefulWidget {
@@ -32,6 +33,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   String _folderId = 'root';
   final _yandex = YandexDiskOAuthService();
   late final YandexVaultSync _sync = YandexVaultSync(oauth: _yandex);
+  late final PasswordMcpController _mcp;
   StreamSubscription<Uri>? _oauthLinks;
   String? _vaultPassword;
 
@@ -39,6 +41,13 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _mcp = PasswordMcpController(
+      readVault: () => (folders: _folders, entries: _entries),
+      writeEntries: (entries) async {
+        if (mounted) setState(() => _entries = entries);
+        await widget.repository.saveEntries(entries);
+      },
+    );
     _oauthLinks = AppLinks().uriLinkStream.listen(_completeYandexAuthorization);
     _load();
   }
@@ -47,6 +56,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _oauthLinks?.cancel();
+    _mcp.dispose();
     super.dispose();
   }
 
@@ -55,6 +65,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.inactive && mounted) {
       setState(() => _unlocked = false);
       _vaultPassword = null;
+      unawaited(_mcp.stop());
     }
   }
 
@@ -222,6 +233,71 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _showMcpSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, refresh) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: const Text('Доступ ИИ по MCP'),
+                subtitle: Text(
+                  _mcp.isRunning
+                      ? _mcp.endpoint!
+                      : 'Выключен — пароли недоступны по сети',
+                ),
+              ),
+              SwitchListTile(
+                title: const Text('Разрешить редактирование'),
+                value: _mcp.readWrite,
+                onChanged: (value) async {
+                  await _mcp.setReadWrite(value);
+                  refresh(() {});
+                },
+              ),
+              if (!_mcp.isRunning)
+                ListTile(
+                  leading: const Icon(Icons.play_arrow),
+                  title: const Text('Запустить сервер'),
+                  onTap: () async {
+                    await _mcp.start(readWrite: _mcp.readWrite);
+                    refresh(() {});
+                  },
+                ),
+              if (_mcp.isRunning) ...[
+                ListTile(
+                  leading: const Icon(Icons.stop),
+                  title: const Text('Остановить сервер'),
+                  onTap: () async {
+                    await _mcp.stop();
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.vpn_key_outlined),
+                  title: const Text('Обновить токен'),
+                  onTap: () async {
+                    await _mcp.rotateToken();
+                    refresh(() {});
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SelectableText(
+                    _mcp.connectionCommand,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _addFolder() async {
     final controller = TextEditingController();
     final name = await showDialog<String>(
@@ -234,6 +310,11 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
           decoration: const InputDecoration(labelText: 'Название'),
         ),
         actions: [
+          IconButton(
+            onPressed: _showMcpSheet,
+            icon: const Icon(Icons.memory_outlined),
+            tooltip: 'MCP для ИИ',
+          ),
           IconButton(
             onPressed: _showSyncSheet,
             icon: const Icon(Icons.cloud_sync_outlined),
@@ -393,10 +474,13 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
             ],
           ),
           IconButton(
-            onPressed: () => setState(() {
-              _unlocked = false;
-              _vaultPassword = null;
-            }),
+            onPressed: () {
+              setState(() {
+                _unlocked = false;
+                _vaultPassword = null;
+              });
+              unawaited(_mcp.stop());
+            },
             icon: const Icon(Icons.lock_outline),
             tooltip: 'Заблокировать',
           ),
