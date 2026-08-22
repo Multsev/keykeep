@@ -182,6 +182,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
 
   Future<void> _showSyncSheet() async {
     final connected = await _yandex.isConnected;
+    final configured = await _yandex.isConfigured;
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -191,13 +192,29 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
           children: [
             ListTile(
               title: const Text('Яндекс Диск'),
-              subtitle: Text(connected ? 'Подключён' : 'Не подключён'),
+              subtitle: Text(
+                connected
+                    ? 'Подключён'
+                    : (configured ? 'Не подключён' : 'Нужен OAuth client ID'),
+              ),
             ),
+            if (!configured)
+              ListTile(
+                leading: const Icon(Icons.settings_outlined),
+                title: const Text('Указать OAuth client ID'),
+                subtitle: const Text(
+                  'Публичный идентификатор приложения из Яндекс ID',
+                ),
+                onTap: () async {
+                  final saved = await _askYandexClientId();
+                  if (saved && context.mounted) Navigator.pop(context);
+                },
+              ),
             if (!connected)
               ListTile(
                 leading: const Icon(Icons.login),
                 title: const Text('Подключить по OAuth'),
-                enabled: _yandex.isConfigured,
+                enabled: configured,
                 onTap: () {
                   Navigator.pop(context);
                   _yandex.startAuthorization().catchError((error) {
@@ -231,6 +248,36 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Future<bool> _askYandexClientId() async {
+    final controller = TextEditingController(text: await _yandex.clientId());
+    if (!mounted) return false;
+    final clientId = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('OAuth client ID Яндекса'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Client ID'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (clientId == null || clientId.trim().isEmpty) return false;
+    await _yandex.saveClientId(clientId);
+    return true;
   }
 
   Future<void> _showMcpSheet() async {

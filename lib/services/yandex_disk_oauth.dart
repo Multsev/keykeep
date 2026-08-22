@@ -13,28 +13,34 @@ class YandexDiskOAuthService {
     : _storage = storage ?? const FlutterSecureStorage(),
       _client = client ?? http.Client();
 
-  static const clientId = String.fromEnvironment('YANDEX_OAUTH_CLIENT_ID');
+  static const _bundledClientId = String.fromEnvironment(
+    'YANDEX_OAUTH_CLIENT_ID',
+  );
   static const redirectUri = 'keykeep://oauth/callback';
   static const _tokenKey = 'yandex_disk_access_token';
   static const _stateKey = 'yandex_disk_state';
   static const _verifierKey = 'yandex_disk_verifier';
+  static const _clientIdKey = 'yandex_disk_client_id';
   final FlutterSecureStorage _storage;
   final http.Client _client;
 
-  bool get isConfigured => clientId.isNotEmpty;
+  Future<bool> get isConfigured async => (await clientId()).isNotEmpty;
   Future<bool> get isConnected async =>
       (await _storage.read(key: _tokenKey)) != null;
 
   Future<void> startAuthorization() async {
-    if (!isConfigured)
-      throw StateError('В сборке не задан YANDEX_OAUTH_CLIENT_ID.');
+    final appClientId = await clientId();
+    if (appClientId.isEmpty)
+      throw StateError(
+        'Укажите OAuth client ID Яндекса в настройках синхронизации.',
+      );
     final state = _randomValue(32);
     final verifier = _randomValue(64);
     await _storage.write(key: _stateKey, value: state);
     await _storage.write(key: _verifierKey, value: verifier);
     final uri = Uri.https('oauth.yandex.ru', '/authorize', {
       'response_type': 'code',
-      'client_id': clientId,
+      'client_id': appClientId,
       'redirect_uri': redirectUri,
       'scope': 'cloud_api:disk.app_folder',
       'state': state,
@@ -46,6 +52,7 @@ class YandexDiskOAuthService {
   }
 
   Future<void> completeAuthorization(Uri callback) async {
+    final appClientId = await clientId();
     final state = await _storage.read(key: _stateKey);
     final verifier = await _storage.read(key: _verifierKey);
     final code = callback.queryParameters['code'];
@@ -61,7 +68,7 @@ class YandexDiskOAuthService {
       body: {
         'grant_type': 'authorization_code',
         'code': code,
-        'client_id': clientId,
+        'client_id': appClientId,
         'redirect_uri': redirectUri,
         'code_verifier': verifier,
       },
@@ -83,6 +90,15 @@ class YandexDiskOAuthService {
   }
 
   Future<void> disconnect() => _storage.delete(key: _tokenKey);
+  Future<String> clientId() async =>
+      (await _storage.read(key: _clientIdKey)) ?? _bundledClientId;
+  Future<void> saveClientId(String value) async {
+    final normalized = value.trim();
+    if (normalized.isEmpty)
+      throw ArgumentError.value(value, 'value', 'Client ID is required.');
+    await _storage.write(key: _clientIdKey, value: normalized);
+  }
+
   static String _challenge(String value) => base64Url
       .encode(sha256.convert(utf8.encode(value)).bytes)
       .replaceAll('=', '');

@@ -41,7 +41,7 @@ flutter build apk --debug
 
 ### Синхронизация в приложении
 
-Создайте OAuth-приложение Яндекса с redirect URI `keykeep://oauth/callback` и укажите его публичный client ID при сборке: `flutter build apk --dart-define=YANDEX_OAUTH_CLIENT_ID=<client-id>`. В release-pipeline это значение берётся из `YANDEX_OAUTH_CLIENT_ID` в `.env`.
+Создайте OAuth-приложение Яндекса с redirect URI `keykeep://oauth/callback`. В приложении откройте облачную синхронизацию, нажмите «Указать OAuth client ID», вставьте публичный client ID и затем «Подключить по OAuth». Client ID и выданный после входа access token хранятся в Android Keystore; client ID также можно передать при сборке через `YANDEX_OAUTH_CLIENT_ID`.
 
 В разблокированном приложении нажмите значок облака, подключите Яндекс Диск и используйте загрузку/скачивание. На Диск передаётся не локальный JSON, а KDBX, зашифрованная текущим мастер-PIN; текущая база хранится в приватной app-папке, и при каждой загрузке сохраняется отдельный зашифрованный снимок в `keykeep-history`.
 
