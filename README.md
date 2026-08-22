@@ -39,6 +39,8 @@ flutter build apk --debug
 
 Скрипт повышает версию, запускает анализ и тесты, создаёт **подписанный** release APK, SHA‑256-файл, Git-коммит и тег, затем публикует оба файла в `KeyKeep/releases` на Яндекс Диске. Поддерживаются варианты версии `patch`, `minor` и `major`.
 
+Для локальной установки без production keystore используйте `./scripts/build_local_artifact.sh`. Он создаёт debug-signed APK и SHA-256 в исключённой из Git папке `releases/`; такой файл не предназначен для публичного распространения.
+
 ### Синхронизация в приложении
 
 Создайте OAuth-приложение Яндекса с redirect URI `keykeep://oauth/callback`. В приложении откройте облачную синхронизацию, нажмите «Указать OAuth client ID», вставьте публичный client ID и затем «Подключить по OAuth». Client ID и выданный после входа access token хранятся в Android Keystore; client ID также можно передать при сборке через `YANDEX_OAUTH_CLIENT_ID`.
