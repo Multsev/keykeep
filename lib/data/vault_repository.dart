@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:keykeep_passwords/domain/password_entry.dart';
+import 'package:keykeep_passwords/domain/vault_folder.dart';
 import 'package:keykeep_passwords/services/master_pin.dart';
 
 /// Persists the vault in Android's encrypted keystore-backed storage.
@@ -13,6 +14,7 @@ class VaultRepository {
   static const _saltKey = 'master_pin_salt';
   static const _verifierKey = 'master_pin_verifier';
   static const _vaultKey = 'vault_entries';
+  static const _foldersKey = 'vault_folders';
   final FlutterSecureStorage _storage;
   final MasterPin _masterPin;
 
@@ -49,5 +51,20 @@ class VaultRepository {
   Future<void> saveEntries(List<PasswordEntry> entries) => _storage.write(
     key: _vaultKey,
     value: jsonEncode(entries.map((entry) => entry.toJson()).toList()),
+  );
+
+  Future<List<VaultFolder>> loadFolders() async {
+    final source = await _storage.read(key: _foldersKey);
+    if (source == null) {
+      return const [VaultFolder(id: 'root', name: 'Все записи')];
+    }
+    return (jsonDecode(source) as List<dynamic>)
+        .map((item) => VaultFolder.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> saveFolders(List<VaultFolder> folders) => _storage.write(
+    key: _foldersKey,
+    value: jsonEncode(folders.map((folder) => folder.toJson()).toList()),
   );
 }

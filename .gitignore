@@ -46,3 +46,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Release credentials and locally staged distributables
+.env
+/releases/
+*.jks
+*.keystore

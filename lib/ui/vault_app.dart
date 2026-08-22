@@ -1,7 +1,10 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:keykeep_passwords/data/vault_repository.dart';
 import 'package:keykeep_passwords/domain/password_entry.dart';
+import 'package:keykeep_passwords/domain/vault_folder.dart';
+import 'package:keykeep_passwords/services/kdbx_vault_codec.dart';
 import 'package:keykeep_passwords/ui/password_editor.dart';
 
 class VaultApp extends StatefulWidget {
@@ -17,7 +20,9 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   bool? _hasMasterPin;
   var _unlocked = false;
   List<PasswordEntry> _entries = [];
+  List<VaultFolder> _folders = const [];
   String _query = '';
+  String _folderId = 'root';
 
   @override
   void initState() {
@@ -53,9 +58,11 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       throw StateError('Неверный PIN');
     }
     final entries = await widget.repository.loadEntries();
+    final folders = await widget.repository.loadFolders();
     if (mounted) {
       setState(() {
         _entries = entries;
+        _folders = folders;
         _unlocked = true;
       });
     }
@@ -76,7 +83,9 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   Future<void> _edit([PasswordEntry? entry]) async {
     final saved = await Navigator.push<PasswordEntry>(
       context,
-      MaterialPageRoute(builder: (_) => PasswordEditor(entry: entry)),
+      MaterialPageRoute(
+        builder: (_) => PasswordEditor(folders: _folders, entry: entry),
+      ),
     );
     if (saved != null) await _save(saved);
   }
@@ -86,6 +95,128 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       () => _entries = _entries.where((item) => item.id != entry.id).toList(),
     );
     await widget.repository.saveEntries(_entries);
+  }
+
+  Future<void> _addFolder() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Новая папка'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Название'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Создать'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    final folder = VaultFolder(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name,
+    );
+    setState(() => _folders = [..._folders, folder]);
+    await widget.repository.saveFolders(_folders);
+  }
+
+  Future<String?> _askKdbxPassword(String title) async {
+    final controller = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'Пароль базы KeePass'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Продолжить'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return password?.isEmpty ?? true ? null : password;
+  }
+
+  Future<void> _exportKdbx() async {
+    final password = await _askKdbxPassword('Экспорт KeePass (.kdbx)');
+    if (password == null) return;
+    try {
+      final bytes = await KdbxVaultCodec().export(
+        folders: _folders,
+        entries: _entries,
+        password: password,
+      );
+      await FilePicker.saveFile(
+        dialogTitle: 'Сохранить KeePass-базу',
+        fileName: 'KeyKeep.kdbx',
+        type: FileType.custom,
+        allowedExtensions: const ['kdbx'],
+        bytes: bytes,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось экспортировать KDBX.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importKdbx() async {
+    final picked = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: const ['kdbx'],
+    );
+    if (picked == null) return;
+    final password = await _askKdbxPassword('Открыть KeePass (.kdbx)');
+    if (password == null) return;
+    try {
+      final snapshot = await KdbxVaultCodec().import(
+        Uint8List.fromList(await picked.readAsBytes()),
+        password,
+      );
+      setState(() {
+        _folders = snapshot.folders;
+        _entries = snapshot.entries;
+        _folderId = 'root';
+      });
+      await widget.repository.saveFolders(_folders);
+      await widget.repository.saveEntries(_entries);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('KeePass-база импортирована.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть KDBX: проверьте пароль и файл.'),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -108,12 +239,29 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   Widget _vault(BuildContext context) {
     final visible = _entries.where((entry) {
       final searchable = '${entry.title} ${entry.username} ${entry.website}';
-      return searchable.toLowerCase().contains(_query.toLowerCase());
+      return (_folderId == 'root' || entry.folderId == _folderId) &&
+          searchable.toLowerCase().contains(_query.toLowerCase());
     }).toList();
     return Scaffold(
       appBar: AppBar(
         title: const Text('KeyKeep'),
         actions: [
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'import') _importKdbx();
+              if (value == 'export') _exportKdbx();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'import',
+                child: Text('Импорт KeePass (.kdbx)'),
+              ),
+              PopupMenuItem(
+                value: 'export',
+                child: Text('Экспорт KeePass (.kdbx)'),
+              ),
+            ],
+          ),
           IconButton(
             onPressed: () => setState(() => _unlocked = false),
             icon: const Icon(Icons.lock_outline),
@@ -134,6 +282,29 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
               leading: const Icon(Icons.search),
               hintText: 'Поиск в хранилище',
               onChanged: (value) => setState(() => _query = value),
+            ),
+          ),
+          SizedBox(
+            height: 44,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                for (final folder in _folders)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(folder.name),
+                      selected: _folderId == folder.id,
+                      onSelected: (_) => setState(() => _folderId = folder.id),
+                    ),
+                  ),
+                IconButton(
+                  onPressed: _addFolder,
+                  icon: const Icon(Icons.create_new_folder_outlined),
+                  tooltip: 'Новая папка',
+                ),
+              ],
             ),
           ),
           Expanded(
