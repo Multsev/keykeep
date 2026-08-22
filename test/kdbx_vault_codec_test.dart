@@ -31,6 +31,12 @@ void main() {
                 type: CustomFieldType.protected,
               ),
             ],
+            history: [
+              PasswordRevision(
+                password: 'previous-password',
+                changedAt: DateTime(2026, 1, 3),
+              ),
+            ],
           ),
         ],
       );
@@ -41,6 +47,10 @@ void main() {
         CustomFieldType.protected,
       );
       expect(restored.entries.single.customFields.single.value, 'token-123');
+      expect(
+        restored.entries.single.history.single.password,
+        'previous-password',
+      );
     },
   );
 }

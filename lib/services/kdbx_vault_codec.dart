@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:kdbx/kdbx.dart';
@@ -49,6 +50,16 @@ class KdbxVaultCodec {
           protected: field.type == CustomFieldType.protected,
         );
       }
+      if (item.history.isNotEmpty) {
+        _set(
+          entry,
+          KdbxKey('KeyKeep:PasswordHistory'),
+          jsonEncode(
+            item.history.map((revision) => revision.toJson()).toList(),
+          ),
+          protected: true,
+        );
+      }
     }
     return file.save();
   }
@@ -75,6 +86,7 @@ class KdbxVaultCodec {
                 'Password',
                 'URL',
                 'Notes',
+                'KeyKeep:PasswordHistory',
               }.contains(value.key),
             )
             .map(
@@ -98,6 +110,7 @@ class KdbxVaultCodec {
             updatedAt: DateTime.now(),
             folderId: folderId,
             customFields: custom,
+            history: _history(values['KeyKeep:PasswordHistory']?.getText()),
           ),
         );
       }
@@ -125,6 +138,19 @@ class KdbxVaultCodec {
         key,
         protected ? ProtectedValue.fromString(value) : PlainValue(value),
       );
+    }
+  }
+
+  List<PasswordRevision> _history(String? source) {
+    if (source == null) return const [];
+    try {
+      return (jsonDecode(source) as List<dynamic>)
+          .map(
+            (item) => PasswordRevision.fromJson(item as Map<String, dynamic>),
+          )
+          .toList();
+    } catch (_) {
+      return const [];
     }
   }
 }

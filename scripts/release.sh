@@ -48,7 +48,11 @@ sed -i '' -E "s/^version: .*/version: $release/" pubspec.yaml
 flutter pub get
 flutter analyze
 flutter test
-flutter build apk --release --build-name="$version" --build-number="$build"
+build_args=(--release --build-name="$version" --build-number="$build")
+if [[ -n "${YANDEX_OAUTH_CLIENT_ID:-}" ]]; then
+  build_args+=(--dart-define="YANDEX_OAUTH_CLIENT_ID=$YANDEX_OAUTH_CLIENT_ID")
+fi
+flutter build apk "${build_args[@]}"
 
 apk="build/app/outputs/flutter-apk/app-release.apk"
 artifact="KeyKeep-v$release.apk"

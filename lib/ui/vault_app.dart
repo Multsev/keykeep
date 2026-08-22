@@ -1,3 +1,8 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +10,8 @@ import 'package:keykeep_passwords/data/vault_repository.dart';
 import 'package:keykeep_passwords/domain/password_entry.dart';
 import 'package:keykeep_passwords/domain/vault_folder.dart';
 import 'package:keykeep_passwords/services/kdbx_vault_codec.dart';
+import 'package:keykeep_passwords/services/yandex_disk_oauth.dart';
+import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
 import 'package:keykeep_passwords/ui/password_editor.dart';
 
 class VaultApp extends StatefulWidget {
@@ -23,17 +30,23 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   List<VaultFolder> _folders = const [];
   String _query = '';
   String _folderId = 'root';
+  final _yandex = YandexDiskOAuthService();
+  late final YandexVaultSync _sync = YandexVaultSync(oauth: _yandex);
+  StreamSubscription<Uri>? _oauthLinks;
+  String? _vaultPassword;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _oauthLinks = AppLinks().uriLinkStream.listen(_completeYandexAuthorization);
     _load();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _oauthLinks?.cancel();
     super.dispose();
   }
 
@@ -41,6 +54,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive && mounted) {
       setState(() => _unlocked = false);
+      _vaultPassword = null;
     }
   }
 
@@ -64,6 +78,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         _entries = entries;
         _folders = folders;
         _unlocked = true;
+        _vaultPassword = pin;
       });
     }
   }
@@ -97,6 +112,116 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     await widget.repository.saveEntries(_entries);
   }
 
+  Future<void> _completeYandexAuthorization(Uri callback) async {
+    try {
+      await _yandex.completeAuthorization(callback);
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Яндекс Диск подключён.')));
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _syncUpload() async {
+    final password = _vaultPassword;
+    if (password == null) return;
+    try {
+      await _sync.upload(
+        folders: _folders,
+        entries: _entries,
+        password: password,
+      );
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Зашифрованная база синхронизирована.')),
+        );
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _syncDownload() async {
+    final password = _vaultPassword;
+    if (password == null) return;
+    try {
+      final snapshot = await _sync.download(password: password);
+      setState(() {
+        _folders = snapshot.folders;
+        _entries = snapshot.entries;
+        _folderId = 'root';
+      });
+      await widget.repository.saveFolders(_folders);
+      await widget.repository.saveEntries(_entries);
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Данные восстановлены с Яндекс Диска.')),
+        );
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _showSyncSheet() async {
+    final connected = await _yandex.isConnected;
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text('Яндекс Диск'),
+              subtitle: Text(connected ? 'Подключён' : 'Не подключён'),
+            ),
+            if (!connected)
+              ListTile(
+                leading: const Icon(Icons.login),
+                title: const Text('Подключить по OAuth'),
+                enabled: _yandex.isConfigured,
+                onTap: () {
+                  Navigator.pop(context);
+                  _yandex.startAuthorization().catchError((error) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(
+                        this.context,
+                      ).showSnackBar(SnackBar(content: Text(error.toString())));
+                    }
+                  });
+                },
+              ),
+            if (connected) ...[
+              ListTile(
+                leading: const Icon(Icons.cloud_upload_outlined),
+                title: const Text('Загрузить на Диск'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _syncUpload();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.cloud_download_outlined),
+                title: const Text('Скачать с Диска'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _syncDownload();
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _addFolder() async {
     final controller = TextEditingController();
     final name = await showDialog<String>(
@@ -109,6 +234,11 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
           decoration: const InputDecoration(labelText: 'Название'),
         ),
         actions: [
+          IconButton(
+            onPressed: _showSyncSheet,
+            icon: const Icon(Icons.cloud_sync_outlined),
+            tooltip: 'Синхронизация с Яндекс Диском',
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Отмена'),
@@ -263,7 +393,10 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
             ],
           ),
           IconButton(
-            onPressed: () => setState(() => _unlocked = false),
+            onPressed: () => setState(() {
+              _unlocked = false;
+              _vaultPassword = null;
+            }),
             icon: const Icon(Icons.lock_outline),
             tooltip: 'Заблокировать',
           ),
@@ -324,6 +457,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                       entry: visible[index],
                       onEdit: () => _edit(visible[index]),
                       onDelete: () => _delete(visible[index]),
+                      onHistory: () => _showPasswordHistory(visible[index]),
                     ),
                   ),
           ),
@@ -331,6 +465,39 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       ),
     );
   }
+
+  Future<void> _showPasswordHistory(PasswordEntry entry) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('История: ${entry.title}'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: entry.history.isEmpty
+            ? const Text('Пароль ещё не изменялся.')
+            : ListView(
+                children: entry.history.reversed
+                    .map(
+                      (revision) => ListTile(
+                        title: SelectableText(revision.password),
+                        subtitle: Text(
+                          revision.changedAt.toLocal().toString().substring(
+                            0,
+                            16,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Закрыть'),
+        ),
+      ],
+    ),
+  );
 }
 
 class _UnlockScreen extends StatefulWidget {
@@ -513,9 +680,11 @@ class _EntryTile extends StatefulWidget {
     required this.entry,
     required this.onEdit,
     required this.onDelete,
+    required this.onHistory,
   });
   final PasswordEntry entry;
   final VoidCallback onEdit, onDelete;
+  final VoidCallback onHistory;
   @override
   State<_EntryTile> createState() => _EntryTileState();
 }
@@ -555,9 +724,14 @@ class _EntryTileState extends State<_EntryTile> {
         PopupMenuButton<String>(
           onSelected: (value) {
             if (value == 'delete') widget.onDelete();
+            if (value == 'history') widget.onHistory();
           },
           itemBuilder: (_) => [
             const PopupMenuItem(value: 'delete', child: Text('Удалить')),
+            const PopupMenuItem(
+              value: 'history',
+              child: Text('История пароля'),
+            ),
           ],
         ),
       ],
