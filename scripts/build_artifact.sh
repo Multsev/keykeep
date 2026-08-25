@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Always produces a versioned local APK. If OAuth token is configured, mirrors it to Yandex Disk.
+# Produces compact, signed release APKs split by CPU architecture. Each phone
+# downloads only its matching ABI instead of carrying all Flutter engines.
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
@@ -17,13 +18,29 @@ if [[ -z "$version" ]]; then
   exit 1
 fi
 
-flutter build apk --debug
-artifact="KeyKeep-v$version-debug.apk"
+for required in ANDROID_KEYSTORE_PATH ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+  if [[ -z "${!required:-}" ]]; then
+    echo "Missing $required. A signed release key is required for compact artifacts." >&2
+    exit 1
+  fi
+done
+
+build_args=(--release --split-per-abi)
+if [[ -n "${YANDEX_OAUTH_CLIENT_ID:-}" ]]; then
+  build_args+=(--dart-define="YANDEX_OAUTH_CLIENT_ID=$YANDEX_OAUTH_CLIENT_ID")
+fi
+flutter build apk "${build_args[@]}"
 output="Release"
 mkdir -p "$output"
-cp build/app/outputs/flutter-apk/app-debug.apk "$output/$artifact"
-shasum -a 256 "$output/$artifact" > "$output/$artifact.sha256"
-echo "Local artifact: $output/$artifact"
+artifacts=()
+for abi in arm64-v8a armeabi-v7a x86_64; do
+  source_apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
+  artifact="KeyKeep-v$version-$abi.apk"
+  cp "$source_apk" "$output/$artifact"
+  shasum -a 256 "$output/$artifact" > "$output/$artifact.sha256"
+  artifacts+=("$artifact" "$artifact.sha256")
+  echo "Local artifact: $output/$artifact"
+done
 
 if [[ -z "${YANDEX_DISK_TOKEN:-}" ]]; then
   echo "Yandex Disk upload skipped: YANDEX_DISK_TOKEN is not configured."
@@ -51,8 +68,10 @@ upload() {
   curl --fail --silent --show-error --upload-file "$output/$name" "$href"
 }
 
-if upload "$artifact" && upload "$artifact.sha256"; then
-  echo "Yandex Disk: $disk_folder/$artifact"
-else
-  echo "Yandex Disk upload failed; the local artifact is preserved in $output/." >&2
-fi
+for artifact in "${artifacts[@]}"; do
+  if upload "$artifact"; then
+    echo "Yandex Disk: $disk_folder/$artifact"
+  else
+    echo "Yandex Disk upload failed; the local artifact is preserved in $output/." >&2
+  fi
+done

@@ -52,14 +52,16 @@ build_args=(--release --build-name="$version" --build-number="$build")
 if [[ -n "${YANDEX_OAUTH_CLIENT_ID:-}" ]]; then
   build_args+=(--dart-define="YANDEX_OAUTH_CLIENT_ID=$YANDEX_OAUTH_CLIENT_ID")
 fi
-flutter build apk "${build_args[@]}"
+flutter build apk --split-per-abi "${build_args[@]}"
 
-apk="build/app/outputs/flutter-apk/app-release.apk"
-artifact="KeyKeep-v$release.apk"
-checksum="$artifact.sha256"
 mkdir -p Release
-cp "$apk" "Release/$artifact"
-shasum -a 256 "Release/$artifact" > "Release/$checksum"
+artifacts=()
+for abi in arm64-v8a armeabi-v7a x86_64; do
+  artifact="KeyKeep-v$release-$abi.apk"
+  cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "Release/$artifact"
+  shasum -a 256 "Release/$artifact" > "Release/$artifact.sha256"
+  artifacts+=("$artifact" "$artifact.sha256")
+done
 
 create_disk_folder() {
   local path="$1"
@@ -87,12 +89,13 @@ upload_artifact() {
   curl --fail --silent --show-error --upload-file "Release/$name" "$href"
 }
 
-upload_artifact "$artifact"
-upload_artifact "$checksum"
+for artifact in "${artifacts[@]}"; do
+  upload_artifact "$artifact"
+done
 
 git add pubspec.yaml pubspec.lock
 git commit -m "Release v$release"
 git tag -a "v$release" -m "KeyKeep v$release"
 
 echo "Released v$release"
-echo "Yandex Disk: $YANDEX_DISK_FOLDER/$artifact"
+echo "Yandex Disk: $YANDEX_DISK_FOLDER/ (three ABI-specific APKs)"
