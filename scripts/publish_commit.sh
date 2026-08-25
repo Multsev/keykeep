@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds one compact, signed calendar-versioned release for the current commit
-# and mirrors exactly the same files to all configured destinations.
+# Builds a compact, signed calendar-versioned release for the current commit
+# and mirrors the same APK to the local Release folder and Yandex Disk.
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
@@ -23,36 +23,70 @@ commit="$(git rev-parse HEAD)"
 short_commit="$(git rev-parse --short=12 HEAD)"
 date_part="$(TZ=Europe/Moscow date '+%d%m%y')"
 code_date="$(TZ=Europe/Moscow date '+%y%m%d')"
-version="0.$date_part"
-tag_prefix="build/v$version-b"
+version_base="0.$date_part"
+tag_prefix="build/v$version_base"
 
-existing_tag="$(git tag --points-at "$commit" --list "$tag_prefix*" | sort -V | tail -n 1)"
+prune_release_folder() {
+  local directory="$1"
+  local candidate name
+  local -a releases=()
+
+  # This pipeline owns KeyKeep APKs only; other files are untouched.
+  shopt -s nullglob
+  for candidate in "$directory"/KeyKeep-v*.apk; do
+    name="${candidate##*/}"
+    if [[ "$name" =~ ^KeyKeep-v0\.[0-9]{6}\.[0-9]{2}\.apk$ ]]; then
+      releases+=("$candidate")
+    else
+      # Removes the previous unnumbered release format so it cannot be mistaken
+      # for the newest build.
+      rm -f -- "$candidate"
+    fi
+  done
+  shopt -u nullglob
+
+  if (( ${#releases[@]} > 4 )); then
+    while IFS= read -r candidate; do
+      rm -f -- "$candidate"
+    done < <(ls -1t "${releases[@]}" | tail -n +5)
+  fi
+}
+
+release_sequence_from_tag() {
+  local tag="$1"
+  local suffix="${tag#build/v$version_base}"
+  case "$suffix" in
+    .[0-9]*) printf '%s\n' "${suffix#.}" ;;
+    -b[0-9]*) printf '%s\n' "${suffix#-b}" ;;
+  esac
+}
+
+existing_tag="$(git tag --points-at "$commit" --list "$tag_prefix.*" | sort -V | tail -n 1)"
 if [[ -n "$existing_tag" ]]; then
-  release="${existing_tag#build/v}"
-  sequence="${release##*-b}"
+  sequence="$(release_sequence_from_tag "$existing_tag")"
 else
   highest=0
   while IFS= read -r tag; do
-    candidate="${tag##*-b}"
+    candidate="$(release_sequence_from_tag "$tag")"
     if [[ "$candidate" =~ ^[0-9]+$ ]] && (( 10#$candidate > highest )); then
       highest=$((10#$candidate))
     fi
   done < <(git tag --list "$tag_prefix*")
   shopt -s nullglob
-  for apk in Release/KeyKeep-v"$version"-b*-arm64-v8a.apk; do
-    candidate="${apk##*-b}"
-    candidate="${candidate%-arm64-v8a.apk}"
+  for apk in Release/KeyKeep-v"$version_base".*.apk; do
+    candidate="${apk##*.}"
+    candidate="${candidate%.apk}"
     if [[ "$candidate" =~ ^[0-9]+$ ]] && (( 10#$candidate > highest )); then
       highest=$((10#$candidate))
     fi
   done
   shopt -u nullglob
   sequence=$((highest + 1))
-  release="$version-b$(printf '%02d' "$sequence")"
 fi
 build_number="$code_date$(printf '%02d' "$((10#$sequence))")"
+version="$version_base.$(printf '%02d' "$sequence")"
 output="Release"
-tag="build/v$release"
+tag="build/v$version"
 
 flutter analyze
 flutter test
@@ -65,8 +99,7 @@ flutter build apk "${build_args[@]}"
 mkdir -p "$output"
 artifact="KeyKeep-v$version.apk"
 cp "build/app/outputs/flutter-apk/app-release.apk" "$output/$artifact"
-# The release directory is intentionally a single-file handoff location.
-find "$output" -maxdepth 1 -type f ! -name "$artifact" -delete
+prune_release_folder "$output"
 
 yandex_status="not configured"
 if [[ -n "${YANDEX_DISK_TOKEN:-}" ]]; then
@@ -79,7 +112,16 @@ if [[ -n "${YANDEX_DISK_TOKEN:-}" ]]; then
     code="$(curl --silent --output /dev/null --write-out '%{http_code}' --request PUT --get --data-urlencode "path=app:/$folder" -H "Authorization: OAuth $YANDEX_DISK_TOKEN" "https://cloud-api.yandex.net/v1/disk/resources")"
     [[ "$code" == "201" || "$code" == "409" ]] || { echo "Cannot create Yandex folder $folder (HTTP $code)." >&2; exit 1; }
   done
-  # Keep the remote release folder as simple as the local handoff folder.
+  # Upload first: a failure never deletes a previous successful release.
+  metadata="$(curl --fail --silent --show-error -H "Authorization: OAuth $YANDEX_DISK_TOKEN" --get --data-urlencode "path=app:/$disk_folder/$artifact" --data-urlencode "overwrite=true" "https://cloud-api.yandex.net/v1/disk/resources/upload")"
+  href="$(printf '%s' "$metadata" | plutil -extract href raw -)"
+  curl --fail --silent --show-error --upload-file "$output/$artifact" "$href"
+
+  # Remove obsolete unnumbered names, then keep the four newest numbered APKs.
+  remote_items="$(curl --fail --silent --show-error --get \
+    --data-urlencode "path=app:/$disk_folder" --data-urlencode 'limit=1000' \
+    -H "Authorization: OAuth $YANDEX_DISK_TOKEN" \
+    'https://cloud-api.yandex.net/v1/disk/resources')"
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
     curl --fail --silent --show-error --request DELETE --get \
@@ -87,35 +129,36 @@ if [[ -n "${YANDEX_DISK_TOKEN:-}" ]]; then
       --data-urlencode 'permanently=true' \
       -H "Authorization: OAuth $YANDEX_DISK_TOKEN" \
       'https://cloud-api.yandex.net/v1/disk/resources' >/dev/null
-  done < <(curl --fail --silent --show-error --get \
-    --data-urlencode "path=app:/$disk_folder" --data-urlencode 'limit=1000' \
-    -H "Authorization: OAuth $YANDEX_DISK_TOKEN" \
-    'https://cloud-api.yandex.net/v1/disk/resources' | jq -r '._embedded.items[]?.name')
-  metadata="$(curl --fail --silent --show-error -H "Authorization: OAuth $YANDEX_DISK_TOKEN" --get --data-urlencode "path=app:/$disk_folder/$artifact" --data-urlencode "overwrite=true" "https://cloud-api.yandex.net/v1/disk/resources/upload")"
-  href="$(printf '%s' "$metadata" | plutil -extract href raw -)"
-  curl --fail --silent --show-error --upload-file "$output/$artifact" "$href"
+  done < <(printf '%s' "$remote_items" | jq -r '
+    ._embedded.items[]?
+    | select(.type == "file")
+    | select(.name | test("^KeyKeep-v"))
+    | select(.name | test("^KeyKeep-v0\\.[0-9]{6}\\.[0-9]{2}\\.apk$") | not)
+    | .name')
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    curl --fail --silent --show-error --request DELETE --get \
+      --data-urlencode "path=app:/$disk_folder/$name" \
+      --data-urlencode 'permanently=true' \
+      -H "Authorization: OAuth $YANDEX_DISK_TOKEN" \
+      'https://cloud-api.yandex.net/v1/disk/resources' >/dev/null
+  done < <(printf '%s' "$remote_items" | jq -r '
+    [._embedded.items[]?
+      | select(.type == "file")
+      | select(.name | test("^KeyKeep-v0\\.[0-9]{6}\\.[0-9]{2}\\.apk$"))
+      | [.modified, .name]]
+    | sort_by(.[0]) | reverse | .[4:][]? | .[1]')
   yandex_status="app:/$disk_folder"
 fi
 
-nfs_status="not configured"
-if [[ -n "${NFS_RELEASE_PATH:-}" ]]; then
-  if [[ ! -d "$NFS_RELEASE_PATH" || ! -w "$NFS_RELEASE_PATH" ]]; then
-    echo "NFS_RELEASE_PATH is not a writable mounted directory: $NFS_RELEASE_PATH" >&2
-    exit 1
-  fi
-  cp "$output/$artifact" "$NFS_RELEASE_PATH/$artifact"
-  nfs_status="$NFS_RELEASE_PATH"
-fi
-
 if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-  git tag -a "$tag" "$commit" -m "KeyKeep $release ($short_commit)"
+  git tag -a "$tag" "$commit" -m "KeyKeep $version ($short_commit)"
 fi
 
-printf 'KeyKeep release: %s\n' "$release"
+printf 'KeyKeep release: %s\n' "$version"
 printf 'Android versionName: %s\n' "$version"
 printf 'Android versionCode: %s\n' "$build_number"
 printf 'Git commit: %s\n' "$commit"
 printf 'Git tag: %s\n' "$tag"
 printf 'Local APK: %s/%s\n' "$root/$output" "$artifact"
 printf 'Yandex Disk: %s/%s\n' "$yandex_status" "$artifact"
-printf 'NFS: %s\n' "$nfs_status"
