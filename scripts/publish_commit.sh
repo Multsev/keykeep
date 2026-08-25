@@ -52,25 +52,21 @@ else
 fi
 build_number="$code_date$(printf '%02d' "$((10#$sequence))")"
 output="Release"
-report="$output/latest-build.txt"
 tag="build/v$release"
 
 flutter analyze
 flutter test
-build_args=(--release --split-per-abi --build-name="$version" --build-number="$build_number")
+build_args=(--release --target-platform=android-arm64 --build-name="$version" --build-number="$build_number")
 if [[ -n "${YANDEX_OAUTH_CLIENT_ID:-}" ]]; then
   build_args+=(--dart-define="YANDEX_OAUTH_CLIENT_ID=$YANDEX_OAUTH_CLIENT_ID")
 fi
 flutter build apk "${build_args[@]}"
 
 mkdir -p "$output"
-artifacts=()
-for abi in arm64-v8a armeabi-v7a x86_64; do
-  artifact="KeyKeep-v$release-$abi.apk"
-  cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "$output/$artifact"
-  shasum -a 256 "$output/$artifact" > "$output/$artifact.sha256"
-  artifacts+=("$artifact" "$artifact.sha256")
-done
+artifact="KeyKeep-v$version.apk"
+cp "build/app/outputs/flutter-apk/app-release.apk" "$output/$artifact"
+# The release directory is intentionally a single-file handoff location.
+find "$output" -maxdepth 1 -type f ! -name "$artifact" -delete
 
 yandex_status="not configured"
 if [[ -n "${YANDEX_DISK_TOKEN:-}" ]]; then
@@ -83,11 +79,21 @@ if [[ -n "${YANDEX_DISK_TOKEN:-}" ]]; then
     code="$(curl --silent --output /dev/null --write-out '%{http_code}' --request PUT --get --data-urlencode "path=app:/$folder" -H "Authorization: OAuth $YANDEX_DISK_TOKEN" "https://cloud-api.yandex.net/v1/disk/resources")"
     [[ "$code" == "201" || "$code" == "409" ]] || { echo "Cannot create Yandex folder $folder (HTTP $code)." >&2; exit 1; }
   done
-  for artifact in "${artifacts[@]}"; do
-    metadata="$(curl --fail --silent --show-error -H "Authorization: OAuth $YANDEX_DISK_TOKEN" --get --data-urlencode "path=app:/$disk_folder/$artifact" --data-urlencode "overwrite=true" "https://cloud-api.yandex.net/v1/disk/resources/upload")"
-    href="$(printf '%s' "$metadata" | plutil -extract href raw -)"
-    curl --fail --silent --show-error --upload-file "$output/$artifact" "$href"
-  done
+  # Keep the remote release folder as simple as the local handoff folder.
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    curl --fail --silent --show-error --request DELETE --get \
+      --data-urlencode "path=app:/$disk_folder/$name" \
+      --data-urlencode 'permanently=true' \
+      -H "Authorization: OAuth $YANDEX_DISK_TOKEN" \
+      'https://cloud-api.yandex.net/v1/disk/resources' >/dev/null
+  done < <(curl --fail --silent --show-error --get \
+    --data-urlencode "path=app:/$disk_folder" --data-urlencode 'limit=1000' \
+    -H "Authorization: OAuth $YANDEX_DISK_TOKEN" \
+    'https://cloud-api.yandex.net/v1/disk/resources' | jq -r '._embedded.items[]?.name')
+  metadata="$(curl --fail --silent --show-error -H "Authorization: OAuth $YANDEX_DISK_TOKEN" --get --data-urlencode "path=app:/$disk_folder/$artifact" --data-urlencode "overwrite=true" "https://cloud-api.yandex.net/v1/disk/resources/upload")"
+  href="$(printf '%s' "$metadata" | plutil -extract href raw -)"
+  curl --fail --silent --show-error --upload-file "$output/$artifact" "$href"
   yandex_status="app:/$disk_folder"
 fi
 
@@ -97,9 +103,7 @@ if [[ -n "${NFS_RELEASE_PATH:-}" ]]; then
     echo "NFS_RELEASE_PATH is not a writable mounted directory: $NFS_RELEASE_PATH" >&2
     exit 1
   fi
-  for artifact in "${artifacts[@]}"; do
-    cp "$output/$artifact" "$NFS_RELEASE_PATH/$artifact"
-  done
+  cp "$output/$artifact" "$NFS_RELEASE_PATH/$artifact"
   nfs_status="$NFS_RELEASE_PATH"
 fi
 
@@ -107,13 +111,11 @@ if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   git tag -a "$tag" "$commit" -m "KeyKeep $release ($short_commit)"
 fi
 
-{
-  printf 'KeyKeep release: %s\n' "$release"
-  printf 'Android versionName: %s\n' "$version"
-  printf 'Android versionCode: %s\n' "$build_number"
-  printf 'Git commit: %s\n' "$commit"
-  printf 'Git tag: %s\n' "$tag"
-  printf 'Local files: %s/KeyKeep-v%s-{arm64-v8a,armeabi-v7a,x86_64}.apk\n' "$root/$output" "$release"
-  printf 'Yandex Disk: %s\n' "$yandex_status"
-  printf 'NFS: %s\n' "$nfs_status"
-} | tee "$report"
+printf 'KeyKeep release: %s\n' "$release"
+printf 'Android versionName: %s\n' "$version"
+printf 'Android versionCode: %s\n' "$build_number"
+printf 'Git commit: %s\n' "$commit"
+printf 'Git tag: %s\n' "$tag"
+printf 'Local APK: %s/%s\n' "$root/$output" "$artifact"
+printf 'Yandex Disk: %s/%s\n' "$yandex_status" "$artifact"
+printf 'NFS: %s\n' "$nfs_status"
