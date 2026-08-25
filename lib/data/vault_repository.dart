@@ -16,6 +16,7 @@ class VaultRepository {
   static const _vaultKey = 'vault_entries';
   static const _foldersKey = 'vault_folders';
   static const _biometricPinKey = 'biometric_unlock_pin';
+  static const _biometricAutoPromptKey = 'biometric_auto_prompt';
   final FlutterSecureStorage _storage;
   final MasterPin _masterPin;
 
@@ -49,11 +50,36 @@ class VaultRepository {
 
   /// Stores the PIN only in Android's keystore-backed secure storage after
   /// the user explicitly enables biometric unlocking.
-  Future<void> enableBiometricUnlock(String pin) =>
-      _storage.write(key: _biometricPinKey, value: pin);
+  Future<void> enableBiometricUnlock(String pin) async {
+    await _storage.write(key: _biometricPinKey, value: pin);
+    await setBiometricAutoPrompt(true);
+  }
 
-  Future<void> disableBiometricUnlock() =>
-      _storage.delete(key: _biometricPinKey);
+  Future<void> disableBiometricUnlock() async {
+    await _storage.delete(key: _biometricPinKey);
+    await _storage.delete(key: _biometricAutoPromptKey);
+  }
+
+  Future<bool> biometricAutoPrompt() async =>
+      await _storage.read(key: _biometricAutoPromptKey) != 'false';
+
+  Future<void> setBiometricAutoPrompt(bool enabled) =>
+      _storage.write(key: _biometricAutoPromptKey, value: enabled.toString());
+
+  /// Removes local vault data and access credentials, but retains app-level
+  /// integrations such as a Yandex Disk OAuth connection.
+  Future<void> deleteVault() async {
+    for (final key in [
+      _saltKey,
+      _verifierKey,
+      _vaultKey,
+      _foldersKey,
+      _biometricPinKey,
+      _biometricAutoPromptKey,
+    ]) {
+      await _storage.delete(key: key);
+    }
+  }
 
   Future<List<PasswordEntry>> loadEntries() async {
     final source = await _storage.read(key: _vaultKey);

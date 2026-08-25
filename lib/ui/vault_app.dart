@@ -16,6 +16,7 @@ import 'package:keykeep_passwords/services/yandex_disk_oauth.dart';
 import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
 import 'package:keykeep_passwords/services/password_mcp_controller.dart';
 import 'package:keykeep_passwords/ui/password_editor.dart';
+import 'package:keykeep_passwords/ui/vault_settings.dart';
 
 class VaultApp extends StatefulWidget {
   const VaultApp({super.key, required this.repository});
@@ -34,6 +35,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   String _query = '';
   String _folderId = 'root';
   var _biometricEnabled = false;
+  var _biometricAutoPrompt = true;
   final _yandex = YandexDiskOAuthService();
   late final YandexVaultSync _sync = YandexVaultSync(oauth: _yandex);
   late final PasswordMcpController _mcp;
@@ -76,10 +78,12 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   Future<void> _load() async {
     final hasPin = await widget.repository.hasMasterPin();
     final biometricEnabled = await widget.repository.hasBiometricUnlock();
+    final biometricAutoPrompt = await widget.repository.biometricAutoPrompt();
     if (!mounted) return;
     setState(() {
       _hasMasterPin = hasPin;
       _biometricEnabled = biometricEnabled;
+      _biometricAutoPrompt = biometricAutoPrompt;
       _unlocked = false;
     });
   }
@@ -117,7 +121,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _configureBiometrics() async {
+  Future<bool> _configureBiometrics() async {
     final password = _vaultPassword;
     if (password == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -127,7 +131,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
           ),
         ),
       );
-      return;
+      return false;
     }
     if (!await _biometric.isAvailable()) {
       if (mounted)
@@ -136,17 +140,68 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
             content: Text('На устройстве нет настроенной биометрии.'),
           ),
         );
-      return;
+      return false;
     }
-    if (!await _biometric.verify()) return;
+    if (!await _biometric.verify()) return false;
     await widget.repository.enableBiometricUnlock(password);
     if (mounted) {
-      setState(() => _biometricEnabled = true);
+      setState(() {
+        _biometricEnabled = true;
+        _biometricAutoPrompt = true;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Вход по отпечатку или лицу включён.')),
       );
     }
+    return true;
   }
+
+  Future<void> _disableBiometrics() async {
+    await widget.repository.disableBiometricUnlock();
+    if (mounted) {
+      setState(() {
+        _biometricEnabled = false;
+        _biometricAutoPrompt = false;
+      });
+    }
+  }
+
+  Future<void> _setBiometricAutoPrompt(bool enabled) async {
+    await widget.repository.setBiometricAutoPrompt(enabled);
+    if (mounted) setState(() => _biometricAutoPrompt = enabled);
+  }
+
+  Future<void> _deleteVault() async {
+    await widget.repository.deleteVault();
+    await _mcp.stop();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    setState(() {
+      _hasMasterPin = false;
+      _unlocked = false;
+      _biometricEnabled = false;
+      _biometricAutoPrompt = false;
+      _entries = [];
+      _folders = const [];
+      _folderId = 'root';
+      _vaultPassword = null;
+    });
+  }
+
+  Future<void> _openSettings() => Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => VaultSettings(
+        biometricEnabled: _biometricEnabled,
+        biometricAutoPrompt: _biometricAutoPrompt,
+        onEnableBiometrics: _configureBiometrics,
+        onDisableBiometrics: _disableBiometrics,
+        onSetAutoPrompt: _setBiometricAutoPrompt,
+        onImportVault: _importKdbx,
+        onExportVault: _exportKdbx,
+        onDeleteVault: _deleteVault,
+      ),
+    ),
+  );
 
   Future<void> _finishFirstVaultSetup(String pin) async {
     await widget.repository.createMasterPin(pin);
@@ -607,6 +662,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         : _UnlockScreen(
             onUnlock: _unlock,
             onBiometricUnlock: _biometricEnabled ? _unlockWithBiometrics : null,
+            autoPromptBiometrics: _biometricEnabled && _biometricAutoPrompt,
           );
   }
 
@@ -638,6 +694,11 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         title: const Text('KeyKeep'),
         actions: [
           IconButton(
+            onPressed: _openSettings,
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Настройки',
+          ),
+          IconButton(
             onPressed: _addFolder,
             icon: const Icon(Icons.create_new_folder_outlined),
             tooltip: 'Новая папка',
@@ -646,11 +707,6 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
             onSelected: (value) {
               if (value == 'import') _importKdbx();
               if (value == 'export') _exportKdbx();
-              if (value == 'biometric') _configureBiometrics();
-              if (value == 'disable_biometric') {
-                widget.repository.disableBiometricUnlock();
-                setState(() => _biometricEnabled = false);
-              }
             },
             itemBuilder: (_) => [
               PopupMenuItem(
@@ -661,15 +717,6 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                 value: 'export',
                 child: Text('Экспорт KeePass (.kdbx)'),
               ),
-              PopupMenuItem(
-                value: 'biometric',
-                child: const Text('Включить вход по биометрии'),
-              ),
-              if (_biometricEnabled)
-                const PopupMenuItem(
-                  value: 'disable_biometric',
-                  child: Text('Отключить вход по биометрии'),
-                ),
             ],
           ),
           IconButton(
@@ -855,9 +902,14 @@ class _FolderBreadcrumbs extends StatelessWidget {
 }
 
 class _UnlockScreen extends StatefulWidget {
-  const _UnlockScreen({required this.onUnlock, this.onBiometricUnlock});
+  const _UnlockScreen({
+    required this.onUnlock,
+    this.onBiometricUnlock,
+    required this.autoPromptBiometrics,
+  });
   final Future<void> Function(String) onUnlock;
   final Future<void> Function()? onBiometricUnlock;
+  final bool autoPromptBiometrics;
   @override
   State<_UnlockScreen> createState() => _UnlockScreenState();
 }
@@ -866,6 +918,14 @@ class _UnlockScreenState extends State<_UnlockScreen> {
   final _pin = TextEditingController();
   String? _error;
   var _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoPromptBiometrics && widget.onBiometricUnlock != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _biometric());
+    }
+  }
 
   @override
   void dispose() {
