@@ -17,6 +17,7 @@ class VaultRepository {
   static const _foldersKey = 'vault_folders';
   static const _biometricPinKey = 'biometric_unlock_pin';
   static const _biometricAutoPromptKey = 'biometric_auto_prompt';
+  static const _vaultModifiedAtKey = 'vault_modified_at';
   final FlutterSecureStorage _storage;
   final MasterPin _masterPin;
 
@@ -76,6 +77,7 @@ class VaultRepository {
       _foldersKey,
       _biometricPinKey,
       _biometricAutoPromptKey,
+      _vaultModifiedAtKey,
     ]) {
       await _storage.delete(key: key);
     }
@@ -91,10 +93,13 @@ class VaultRepository {
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
-  Future<void> saveEntries(List<PasswordEntry> entries) => _storage.write(
-    key: _vaultKey,
-    value: jsonEncode(entries.map((entry) => entry.toJson()).toList()),
-  );
+  Future<void> saveEntries(List<PasswordEntry> entries) async {
+    await _storage.write(
+      key: _vaultKey,
+      value: jsonEncode(entries.map((entry) => entry.toJson()).toList()),
+    );
+    await _touchVault();
+  }
 
   Future<List<VaultFolder>> loadFolders() async {
     final source = await _storage.read(key: _foldersKey);
@@ -106,8 +111,26 @@ class VaultRepository {
         .toList();
   }
 
-  Future<void> saveFolders(List<VaultFolder> folders) => _storage.write(
-    key: _foldersKey,
-    value: jsonEncode(folders.map((folder) => folder.toJson()).toList()),
+  Future<void> saveFolders(List<VaultFolder> folders) async {
+    await _storage.write(
+      key: _foldersKey,
+      value: jsonEncode(folders.map((folder) => folder.toJson()).toList()),
+    );
+    await _touchVault();
+  }
+
+  Future<DateTime> vaultModifiedAt() async {
+    final stored = await _storage.read(key: _vaultModifiedAtKey);
+    if (stored != null) return DateTime.parse(stored).toLocal();
+    final entries = await loadEntries();
+    if (entries.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+    return entries
+        .map((entry) => entry.updatedAt)
+        .reduce((latest, value) => value.isAfter(latest) ? value : latest);
+  }
+
+  Future<void> _touchVault() => _storage.write(
+    key: _vaultModifiedAtKey,
+    value: DateTime.now().toUtc().toIso8601String(),
   );
 }

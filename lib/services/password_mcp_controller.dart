@@ -15,19 +15,29 @@ typedef PasswordVaultReader =
 typedef PasswordVaultWriter = Future<void> Function(
   List<PasswordEntry> entries,
 );
+typedef PasswordMcpApproval = Future<bool> Function(McpApprovalRequest request);
+
+class McpApprovalRequest {
+  const McpApprovalRequest({required this.action, required this.details});
+  final String action;
+  final String details;
+}
 
 /// Exposes an unlocked vault through a token-protected local MCP endpoint.
 class PasswordMcpController extends ChangeNotifier {
   PasswordMcpController({
     required PasswordVaultReader readVault,
     required PasswordVaultWriter writeEntries,
+    required PasswordMcpApproval requestApproval,
     FlutterSecureStorage? storage,
   }) : _readVault = readVault,
        _writeEntries = writeEntries,
+       _requestApproval = requestApproval,
        _storage = storage ?? const FlutterSecureStorage();
   static const _tokenKey = 'keykeep_mcp_token';
   final PasswordVaultReader _readVault;
   final PasswordVaultWriter _writeEntries;
+  final PasswordMcpApproval _requestApproval;
   final FlutterSecureStorage _storage;
   HttpServer? _server;
   String _token = '';
@@ -183,8 +193,7 @@ class PasswordMcpController extends ChangeNotifier {
     },
     {
       'name': 'get_password_entry',
-      'description':
-          'Reads one full entry, including protected fields and password.',
+      'description': 'Requests one full entry. The phone owner must approve revealing protected fields and password.',
       'inputSchema': {
         'type': 'object',
         'properties': {
@@ -195,7 +204,7 @@ class PasswordMcpController extends ChangeNotifier {
     },
     {
       'name': 'upsert_password_entry',
-      'description': 'Creates or updates a password entry. Available only in read/write mode.',
+      'description': 'Requests creation or update of a password entry. The phone owner must approve every change.',
       'inputSchema': {
         'type': 'object',
         'properties': {
@@ -235,6 +244,15 @@ class PasswordMcpController extends ChangeNotifier {
       final id = args['id'] as String?;
       final entry = vault.entries.where((value) => value.id == id).firstOrNull;
       if (entry == null) throw FormatException('Entry not found.');
+      final approved = await _requestApproval(
+        McpApprovalRequest(
+          action: 'Показать защищённые данные',
+          details:
+              'ИИ запрашивает пароль и защищённые поля записи «${entry.title}».',
+        ),
+      );
+      if (!approved)
+        throw FormatException('Phone owner did not approve revealing secrets.');
       result = entry.toJson();
     } else if (name == 'upsert_password_entry') {
       if (!_readWrite) throw FormatException('MCP is in read-only mode.');
@@ -251,6 +269,15 @@ class PasswordMcpController extends ChangeNotifier {
         folderId: args['folderId'] as String? ?? 'root',
       );
       final entries = [...vault.entries];
+      final approved = await _requestApproval(
+        McpApprovalRequest(
+          action: index < 0 ? 'Создать запись' : 'Изменить запись',
+          details:
+              '${index < 0 ? 'ИИ создаст' : 'ИИ изменит'} запись «${changed.title}».',
+        ),
+      );
+      if (!approved)
+        throw FormatException('Phone owner did not approve this change.');
       if (index < 0) {
         entries.add(changed);
       } else {

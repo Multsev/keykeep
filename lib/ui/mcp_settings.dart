@@ -73,7 +73,9 @@ class McpSettings extends StatelessWidget {
                 SwitchListTile(
                   secondary: const Icon(Icons.edit_outlined),
                   title: const Text('Разрешить редактирование'),
-                  subtitle: const Text('ИИ сможет создавать и изменять записи'),
+                  subtitle: const Text(
+                    'Каждое изменение потребуется подтвердить на телефоне',
+                  ),
                   value: controller.readWrite,
                   onChanged: controller.setReadWrite,
                 ),
@@ -94,7 +96,7 @@ class McpSettings extends StatelessWidget {
               leading: Icon(Icons.warning_amber_outlined),
               title: Text('Данные хранилища'),
               subtitle: Text(
-                'В режиме чтения доступны структура и записи, включая защищённые поля по явному запросу ИИ. Подключайте только доверенный клиент в частной сети.',
+                'Структура доступна в режиме чтения. Каждый запрос пароля или защищённого поля, а также каждое изменение, подтверждается на телефоне.',
               ),
             ),
           ),

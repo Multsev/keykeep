@@ -53,6 +53,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         if (mounted) setState(() => _entries = entries);
         await widget.repository.saveEntries(entries);
       },
+      requestApproval: _confirmMcpAction,
     );
     _oauthLinks = AppLinks().uriLinkStream.listen(_completeYandexAuthorization);
     _load();
@@ -309,8 +310,29 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
 
   Future<void> _syncDownload() async {
     final password = _vaultPassword;
-    if (password == null) return;
+    if (password == null) {
+      _showMessage('Для восстановления введите мастер-PIN, а не биометрию.');
+      return;
+    }
     try {
+      final remote = await _sync.remoteInfo();
+      if (remote == null) {
+        _showMessage('В выбранной папке пока нет хранилища.');
+        return;
+      }
+      final localModifiedAt = await widget.repository.vaultModifiedAt();
+      if (!mounted ||
+          !await _confirmYandexRestore(
+            localModifiedAt: localModifiedAt,
+            remoteModifiedAt: remote.modifiedAt,
+          )) {
+        return;
+      }
+      await _sync.backupLocal(
+        folders: _folders,
+        entries: _entries,
+        password: password,
+      );
       final snapshot = await _sync.download(password: password);
       setState(() {
         _folders = snapshot.folders;
@@ -320,14 +342,81 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       await widget.repository.saveFolders(_folders);
       await widget.repository.saveEntries(_entries);
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Данные восстановлены с Яндекс Диска.')),
+        _showMessage(
+          'Данные восстановлены. Локальная версия сохранена в истории на Диске.',
         );
     } catch (error) {
       if (mounted)
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
     }
+  }
+
+  Future<bool> _confirmYandexRestore({
+    required DateTime localModifiedAt,
+    required DateTime remoteModifiedAt,
+  }) async {
+    final localIsNewer = localModifiedAt.isAfter(remoteModifiedAt);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded),
+        title: const Text('Заменить локальное хранилище?'),
+        content: Text(
+          'Локальная версия: ${_formatDate(localModifiedAt)}\n'
+          'Версия на Диске: ${_formatDate(remoteModifiedAt)}\n\n'
+          '${localIsNewer ? 'Локальная версия новее. ' : ''}'
+          'Перед восстановлением KeyKeep автоматически сохранит текущую локальную версию в истории на Яндекс Диске.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Сохранить и восстановить'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  Future<bool> _confirmMcpAction(McpApprovalRequest request) async {
+    if (!mounted || !_unlocked) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.shield_outlined),
+        title: Text(request.action),
+        content: Text(request.details),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отклонить'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Разрешить'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  void _showMessage(String value) {
+    if (mounted)
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(value)));
+  }
+
+  String _formatDate(DateTime value) {
+    if (value.millisecondsSinceEpoch == 0) return 'нет локальной версии';
+    return '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year} '
+        '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
   }
 
   Future<void> _addFolder() async {

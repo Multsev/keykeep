@@ -54,6 +54,47 @@ class YandexVaultSync {
     await _ensureFolder('$folder/$_historyFolderName');
   }
 
+  Future<RemoteVaultInfo?> remoteInfo() async {
+    final token = await _oauth.token();
+    final folder = await _oauth.syncFolder();
+    final response = await _client.get(
+      Uri.https('cloud-api.yandex.net', '/v1/disk/resources', {
+        'path': _currentPath(folder),
+      }),
+      headers: {'Authorization': 'OAuth $token'},
+    );
+    if (response.statusCode == 404) return null;
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final modified = payload['modified'] as String?;
+    if (response.statusCode != 200 || modified == null) {
+      throw StateError('Не удалось получить сведения об облачной версии.');
+    }
+    return RemoteVaultInfo(
+      modifiedAt: DateTime.parse(modified).toLocal(),
+      size: payload['size'] as int? ?? 0,
+    );
+  }
+
+  /// Keeps the current device state before remote data replaces it.
+  Future<SyncVersion> backupLocal({
+    required List<VaultFolder> folders,
+    required List<PasswordEntry> entries,
+    required String password,
+  }) async {
+    final bytes = await _codec.export(
+      folders: folders,
+      entries: entries,
+      password: password,
+    );
+    final folder = await _oauth.syncFolder();
+    await prepareFolder(folder);
+    return _uploadSnapshot(
+      folder: folder,
+      prefix: 'local-before-restore',
+      bytes: bytes,
+    );
+  }
+
   /// Publishes the current vault and an immutable, content-addressed snapshot.
   /// The snapshot id behaves like a Git commit id: identical vaults have the
   /// same id and earlier versions are never overwritten.
@@ -70,15 +111,7 @@ class YandexVaultSync {
     final folder = await _oauth.syncFolder();
     await prepareFolder(folder);
     await _upload(_currentPath(folder), bytes);
-    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(':', '-');
-    final id = sha256.convert(bytes).toString().substring(0, 12);
-    final snapshotPath = 'app:/$folder/$_historyFolderName/$stamp-$id.kdbx';
-    await _upload(snapshotPath, bytes);
-    return SyncVersion(
-      id: id,
-      createdAt: DateTime.now().toUtc(),
-      path: snapshotPath,
-    );
+    return _uploadSnapshot(folder: folder, prefix: 'cloud', bytes: bytes);
   }
 
   Future<VaultSnapshot> download({required String password}) async {
@@ -132,7 +165,26 @@ class YandexVaultSync {
       throw StateError('Не удалось загрузить зашифрованную базу.');
   }
 
+  Future<SyncVersion> _uploadSnapshot({
+    required String folder,
+    required String prefix,
+    required Uint8List bytes,
+  }) async {
+    final createdAt = DateTime.now().toUtc();
+    final stamp = createdAt.toIso8601String().replaceAll(':', '-');
+    final id = sha256.convert(bytes).toString().substring(0, 12);
+    final path = 'app:/$folder/$_historyFolderName/$prefix-$stamp-$id.kdbx';
+    await _upload(path, bytes);
+    return SyncVersion(id: id, createdAt: createdAt, path: path);
+  }
+
   String _currentPath(String folder) => 'app:/$folder/$_vaultFileName';
+}
+
+class RemoteVaultInfo {
+  const RemoteVaultInfo({required this.modifiedAt, required this.size});
+  final DateTime modifiedAt;
+  final int size;
 }
 
 class SyncVersion {
