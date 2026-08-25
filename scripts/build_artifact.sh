@@ -12,11 +12,18 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-version="$(sed -nE 's/^version: ([0-9]+\.[0-9]+\.[0-9]+\+[0-9]+)$/\1/p' pubspec.yaml)"
-if [[ -z "$version" ]]; then
-  echo "Could not read version from pubspec.yaml." >&2
-  exit 1
-fi
+# Visible version is deliberately calendar based: 0.DDMMYY in Moscow time.
+# Android also needs an ever-increasing integer, so the build number uses
+# YYMMDD plus a two digit sequence for repeated builds on one day.
+date_part="$(TZ=Europe/Moscow date '+%d%m%y')"
+code_date="$(TZ=Europe/Moscow date '+%y%m%d')"
+version="0.$date_part"
+sequence=1
+while [[ -e "Release/KeyKeep-v$version-b$(printf '%02d' "$sequence")-arm64-v8a.apk" ]]; do
+  sequence=$((sequence + 1))
+done
+build_number="$code_date$(printf '%02d' "$sequence")"
+release="$version-b$(printf '%02d' "$sequence")"
 
 for required in ANDROID_KEYSTORE_PATH ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
   if [[ -z "${!required:-}" ]]; then
@@ -25,7 +32,7 @@ for required in ANDROID_KEYSTORE_PATH ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIA
   fi
 done
 
-build_args=(--release --split-per-abi)
+build_args=(--release --split-per-abi --build-name="$version" --build-number="$build_number")
 if [[ -n "${YANDEX_OAUTH_CLIENT_ID:-}" ]]; then
   build_args+=(--dart-define="YANDEX_OAUTH_CLIENT_ID=$YANDEX_OAUTH_CLIENT_ID")
 fi
@@ -35,7 +42,7 @@ mkdir -p "$output"
 artifacts=()
 for abi in arm64-v8a armeabi-v7a x86_64; do
   source_apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
-  artifact="KeyKeep-v$version-$abi.apk"
+  artifact="KeyKeep-v$release-$abi.apk"
   cp "$source_apk" "$output/$artifact"
   shasum -a 256 "$output/$artifact" > "$output/$artifact.sha256"
   artifacts+=("$artifact" "$artifact.sha256")

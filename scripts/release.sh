@@ -11,11 +11,10 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-bump="${1:-patch}"
-case "$bump" in
-  patch|minor|major) ;;
-  *) echo "Usage: ./scripts/release.sh [patch|minor|major]" >&2; exit 1 ;;
-esac
+if [[ $# -ne 0 ]]; then
+  echo "Usage: ./scripts/release.sh" >&2
+  exit 1
+fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Commit or stash local changes before making a release." >&2
@@ -29,22 +28,19 @@ fi
 : "${ANDROID_KEY_PASSWORD:?Set Android signing variables in .env.}"
 YANDEX_DISK_FOLDER="${YANDEX_DISK_FOLDER:-KeyKeep/releases}"
 
-current="$(sed -nE 's/^version: ([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)$/\1+\2/p' pubspec.yaml)"
-if [[ -z "$current" ]]; then
-  echo "Could not read version from pubspec.yaml." >&2
-  exit 1
-fi
-IFS='+.' read -r major minor patch build <<< "$current"
-case "$bump" in
-  patch) patch=$((patch + 1)) ;;
-  minor) minor=$((minor + 1)); patch=0 ;;
-  major) major=$((major + 1)); minor=0; patch=0 ;;
-esac
-build=$((build + 1))
-version="$major.$minor.$patch"
-release="$version+$build"
+date_part="$(TZ=Europe/Moscow date '+%d%m%y')"
+code_date="$(TZ=Europe/Moscow date '+%y%m%d')"
+version="0.$date_part"
+sequence=1
+while git rev-parse -q --verify "refs/tags/v$version-b$(printf '%02d' "$sequence")" >/dev/null; do
+  sequence=$((sequence + 1))
+done
+build="$code_date$(printf '%02d' "$sequence")"
+release="$version-b$(printf '%02d' "$sequence")"
 
-sed -i '' -E "s/^version: .*/version: $release/" pubspec.yaml
+# pubspec requires semantic x.y.z, while Android's visible version is exactly
+# 0.DDMMYY and is passed below with --build-name.
+sed -i '' -E "s/^version: .*/version: 0.0.0+$build/" pubspec.yaml
 flutter pub get
 flutter analyze
 flutter test
