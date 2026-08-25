@@ -15,6 +15,7 @@ class VaultRepository {
   static const _verifierKey = 'master_pin_verifier';
   static const _vaultKey = 'vault_entries';
   static const _foldersKey = 'vault_folders';
+  static const _biometricPinKey = 'biometric_unlock_pin';
   final FlutterSecureStorage _storage;
   final MasterPin _masterPin;
 
@@ -37,6 +38,22 @@ class VaultRepository {
         verifier != null &&
         _masterPin.matches(pin, salt, verifier);
   }
+
+  Future<bool> biometricUnlock() async {
+    final pin = await _storage.read(key: _biometricPinKey);
+    return pin != null && await unlock(pin);
+  }
+
+  Future<bool> hasBiometricUnlock() async =>
+      (await _storage.read(key: _biometricPinKey)) != null;
+
+  /// Stores the PIN only in Android's keystore-backed secure storage after
+  /// the user explicitly enables biometric unlocking.
+  Future<void> enableBiometricUnlock(String pin) =>
+      _storage.write(key: _biometricPinKey, value: pin);
+
+  Future<void> disableBiometricUnlock() =>
+      _storage.delete(key: _biometricPinKey);
 
   Future<List<PasswordEntry>> loadEntries() async {
     final source = await _storage.read(key: _vaultKey);

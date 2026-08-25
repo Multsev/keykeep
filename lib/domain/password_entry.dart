@@ -1,4 +1,4 @@
-enum CustomFieldType { text, protected }
+enum CustomFieldType { text, protected, oneTimePassword }
 
 class PasswordRevision {
   const PasswordRevision({required this.password, required this.changedAt});

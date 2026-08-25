@@ -24,14 +24,25 @@ class KdbxVaultCodec {
       generator: 'KeyKeep',
     );
     final groups = <String, KdbxGroup>{'root': file.body.rootGroup};
-    for (final folder in folders.where((folder) => folder.id != 'root')) {
-      final group = KdbxGroup.create(
-        ctx: file.ctx,
-        parent: file.body.rootGroup,
-        name: folder.name,
-      );
-      file.body.rootGroup.addGroup(group);
-      groups[folder.id] = group;
+    final pending = folders.where((folder) => folder.id != 'root').toList();
+    // Folders may arrive unsorted. Create them only after their parent exists,
+    // preserving the full group tree in the KDBX file.
+    while (pending.isNotEmpty) {
+      final created = pending
+          .where((folder) => groups.containsKey(folder.parentId))
+          .toList();
+      if (created.isEmpty) break;
+      for (final folder in created) {
+        final parent = groups[folder.parentId]!;
+        final group = KdbxGroup.create(
+          ctx: file.ctx,
+          parent: parent,
+          name: folder.name,
+        );
+        parent.addGroup(group);
+        groups[folder.id] = group;
+        pending.remove(folder);
+      }
     }
     for (final item in entries) {
       final parent = groups[item.folderId] ?? file.body.rootGroup;
@@ -47,7 +58,7 @@ class KdbxVaultCodec {
           entry,
           KdbxKey(field.name),
           field.value,
-          protected: field.type == CustomFieldType.protected,
+          protected: field.type != CustomFieldType.text,
         );
       }
       if (item.history.isNotEmpty) {
@@ -93,9 +104,13 @@ class KdbxVaultCodec {
               (value) => CustomField(
                 name: value.key,
                 value: value.value?.getText() ?? '',
-                type: value.value is ProtectedValue
-                    ? CustomFieldType.protected
-                    : CustomFieldType.text,
+                type:
+                    value.key.toUpperCase().contains('TOTP') ||
+                        value.key.toUpperCase().contains('OTP')
+                    ? CustomFieldType.oneTimePassword
+                    : (value.value is ProtectedValue
+                          ? CustomFieldType.protected
+                          : CustomFieldType.text),
               ),
             )
             .toList();
@@ -117,7 +132,11 @@ class KdbxVaultCodec {
       for (final groupChild in group.groups) {
         final id = groupChild.uuid.toString();
         folders.add(
-          VaultFolder(id: id, name: groupChild.name.get() ?? 'Папка'),
+          VaultFolder(
+            id: id,
+            name: groupChild.name.get() ?? 'Папка',
+            parentId: folderId,
+          ),
         );
         readGroup(groupChild, id);
       }

@@ -13,6 +13,7 @@ void main() {
         folders: const [
           VaultFolder(id: 'root', name: 'Все записи'),
           VaultFolder(id: 'work', name: 'Работа'),
+          VaultFolder(id: 'production', name: 'Продакшен', parentId: 'work'),
         ],
         entries: [
           PasswordEntry(
@@ -23,12 +24,17 @@ void main() {
             website: '',
             note: '',
             updatedAt: DateTime(2026),
-            folderId: 'work',
+            folderId: 'production',
             customFields: const [
               CustomField(
                 name: 'API token',
                 value: 'token-123',
                 type: CustomFieldType.protected,
+              ),
+              CustomField(
+                name: 'TOTP',
+                value: 'JBSWY3DPEHPK3PXP',
+                type: CustomFieldType.oneTimePassword,
               ),
             ],
             history: [
@@ -43,10 +49,29 @@ void main() {
       final restored = await codec.import(bytes, 'vault-password');
       expect(restored.folders.map((folder) => folder.name), contains('Работа'));
       expect(
-        restored.entries.single.customFields.single.type,
+        restored.folders
+            .singleWhere((folder) => folder.name == 'Продакшен')
+            .parentId,
+        isNot('root'),
+      );
+      expect(
+        restored.entries.single.customFields
+            .singleWhere((field) => field.name == 'API token')
+            .type,
         CustomFieldType.protected,
       );
-      expect(restored.entries.single.customFields.single.value, 'token-123');
+      expect(
+        restored.entries.single.customFields
+            .singleWhere((field) => field.name == 'API token')
+            .value,
+        'token-123',
+      );
+      expect(
+        restored.entries.single.customFields
+            .singleWhere((field) => field.name == 'TOTP')
+            .type,
+        CustomFieldType.oneTimePassword,
+      );
       expect(
         restored.entries.single.history.single.password,
         'previous-password',

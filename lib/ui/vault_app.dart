@@ -10,6 +10,8 @@ import 'package:keykeep_passwords/data/vault_repository.dart';
 import 'package:keykeep_passwords/domain/password_entry.dart';
 import 'package:keykeep_passwords/domain/vault_folder.dart';
 import 'package:keykeep_passwords/services/kdbx_vault_codec.dart';
+import 'package:keykeep_passwords/services/biometric_unlock.dart';
+import 'package:keykeep_passwords/services/totp_generator.dart';
 import 'package:keykeep_passwords/services/yandex_disk_oauth.dart';
 import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
 import 'package:keykeep_passwords/services/password_mcp_controller.dart';
@@ -31,9 +33,11 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   List<VaultFolder> _folders = const [];
   String _query = '';
   String _folderId = 'root';
+  var _biometricEnabled = false;
   final _yandex = YandexDiskOAuthService();
   late final YandexVaultSync _sync = YandexVaultSync(oauth: _yandex);
   late final PasswordMcpController _mcp;
+  final _biometric = BiometricUnlock();
   StreamSubscription<Uri>? _oauthLinks;
   String? _vaultPassword;
 
@@ -71,9 +75,11 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
 
   Future<void> _load() async {
     final hasPin = await widget.repository.hasMasterPin();
+    final biometricEnabled = await widget.repository.hasBiometricUnlock();
     if (!mounted) return;
     setState(() {
       _hasMasterPin = hasPin;
+      _biometricEnabled = biometricEnabled;
       _unlocked = false;
     });
   }
@@ -91,6 +97,54 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         _unlocked = true;
         _vaultPassword = pin;
       });
+    }
+  }
+
+  Future<void> _unlockWithBiometrics() async {
+    if (!await _biometric.verify() ||
+        !await widget.repository.biometricUnlock()) {
+      throw StateError('Не удалось разблокировать хранилище по биометрии.');
+    }
+    final entries = await widget.repository.loadEntries();
+    final folders = await widget.repository.loadFolders();
+    if (mounted) {
+      setState(() {
+        _entries = entries;
+        _folders = folders;
+        _unlocked = true;
+        _vaultPassword = null;
+      });
+    }
+  }
+
+  Future<void> _configureBiometrics() async {
+    final password = _vaultPassword;
+    if (password == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Введите мастер-PIN после биометрического входа, чтобы настроить синхронизацию.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (!await _biometric.isAvailable()) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('На устройстве нет настроенной биометрии.'),
+          ),
+        );
+      return;
+    }
+    if (!await _biometric.verify()) return;
+    await widget.repository.enableBiometricUnlock(password);
+    if (mounted) {
+      setState(() => _biometricEnabled = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Вход по отпечатку или лицу включён.')),
+      );
     }
   }
 
@@ -141,14 +195,18 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     final password = _vaultPassword;
     if (password == null) return;
     try {
-      await _sync.upload(
+      final version = await _sync.upload(
         folders: _folders,
         entries: _entries,
         password: password,
       );
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Зашифрованная база синхронизирована.')),
+          SnackBar(
+            content: Text(
+              'Синхронизировано. Версия ${version.id} сохранена в истории.',
+            ),
+          ),
         );
     } catch (error) {
       if (mounted)
@@ -347,35 +405,60 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
 
   Future<void> _addFolder() async {
     final controller = TextEditingController();
+    var parentId = _folderId;
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Новая папка'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Название'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Новая папка'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Название'),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: parentId,
+                decoration: const InputDecoration(
+                  labelText: 'Родительская папка',
+                ),
+                items: _folders
+                    .map(
+                      (folder) => DropdownMenuItem(
+                        value: folder.id,
+                        child: Text(_folderLabel(folder)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) =>
+                    setDialogState(() => parentId = value ?? 'root'),
+              ),
+            ],
+          ),
+          actions: [
+            IconButton(
+              onPressed: _showMcpSheet,
+              icon: const Icon(Icons.memory_outlined),
+              tooltip: 'MCP для ИИ',
+            ),
+            IconButton(
+              onPressed: _showSyncSheet,
+              icon: const Icon(Icons.cloud_sync_outlined),
+              tooltip: 'Синхронизация с Яндекс Диском',
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Создать'),
+            ),
+          ],
         ),
-        actions: [
-          IconButton(
-            onPressed: _showMcpSheet,
-            icon: const Icon(Icons.memory_outlined),
-            tooltip: 'MCP для ИИ',
-          ),
-          IconButton(
-            onPressed: _showSyncSheet,
-            icon: const Icon(Icons.cloud_sync_outlined),
-            tooltip: 'Синхронизация с Яндекс Диском',
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Создать'),
-          ),
-        ],
       ),
     );
     controller.dispose();
@@ -383,6 +466,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     final folder = VaultFolder(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       name: name,
+      parentId: parentId,
     );
     setState(() => _folders = [..._folders, folder]);
     await widget.repository.saveFolders(_folders);
@@ -491,13 +575,19 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         },
       );
     }
-    return _unlocked ? _vault(context) : _UnlockScreen(onUnlock: _unlock);
+    return _unlocked
+        ? _vault(context)
+        : _UnlockScreen(
+            onUnlock: _unlock,
+            onBiometricUnlock: _biometricEnabled ? _unlockWithBiometrics : null,
+          );
   }
 
   Widget _vault(BuildContext context) {
     final visible = _entries.where((entry) {
       final searchable = '${entry.title} ${entry.username} ${entry.website}';
-      return (_folderId == 'root' || entry.folderId == _folderId) &&
+      return (_folderId == 'root' ||
+              _folderTreeIds(_folderId).contains(entry.folderId)) &&
           searchable.toLowerCase().contains(_query.toLowerCase());
     }).toList();
     return Scaffold(
@@ -508,8 +598,13 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
             onSelected: (value) {
               if (value == 'import') _importKdbx();
               if (value == 'export') _exportKdbx();
+              if (value == 'biometric') _configureBiometrics();
+              if (value == 'disable_biometric') {
+                widget.repository.disableBiometricUnlock();
+                setState(() => _biometricEnabled = false);
+              }
             },
-            itemBuilder: (_) => const [
+            itemBuilder: (_) => [
               PopupMenuItem(
                 value: 'import',
                 child: Text('Импорт KeePass (.kdbx)'),
@@ -518,6 +613,15 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                 value: 'export',
                 child: Text('Экспорт KeePass (.kdbx)'),
               ),
+              PopupMenuItem(
+                value: 'biometric',
+                child: const Text('Включить вход по биометрии'),
+              ),
+              if (_biometricEnabled)
+                const PopupMenuItem(
+                  value: 'disable_biometric',
+                  child: Text('Отключить вход по биометрии'),
+                ),
             ],
           ),
           IconButton(
@@ -558,7 +662,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: ChoiceChip(
-                      label: Text(folder.name),
+                      label: Text(_folderLabel(folder)),
                       selected: _folderId == folder.id,
                       onSelected: (_) => setState(() => _folderId = folder.id),
                     ),
@@ -629,11 +733,37 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       ],
     ),
   );
+
+  Set<String> _folderTreeIds(String rootId) {
+    final ids = <String>{rootId};
+    var expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (final folder in _folders) {
+        if (ids.contains(folder.parentId) && ids.add(folder.id))
+          expanded = true;
+      }
+    }
+    return ids;
+  }
+
+  String _folderLabel(VaultFolder folder) {
+    var depth = 0;
+    var parent = folder.parentId;
+    while (parent != 'root' && depth < 6) {
+      final match = _folders.where((item) => item.id == parent);
+      if (match.isEmpty) break;
+      parent = match.first.parentId;
+      depth++;
+    }
+    return '${'› ' * depth}${folder.name}';
+  }
 }
 
 class _UnlockScreen extends StatefulWidget {
-  const _UnlockScreen({required this.onUnlock});
+  const _UnlockScreen({required this.onUnlock, this.onBiometricUnlock});
   final Future<void> Function(String) onUnlock;
+  final Future<void> Function()? onBiometricUnlock;
   @override
   State<_UnlockScreen> createState() => _UnlockScreenState();
 }
@@ -663,6 +793,17 @@ class _UnlockScreenState extends State<_UnlockScreen> {
     }
   }
 
+  Future<void> _biometric() async {
+    setState(() => _busy = true);
+    try {
+      await widget.onBiometricUnlock!();
+    } on StateError catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => _Gate(
     title: 'Хранилище заблокировано',
@@ -672,6 +813,8 @@ class _UnlockScreenState extends State<_UnlockScreen> {
     busy: _busy,
     error: _error,
     label: 'Открыть',
+    secondaryAction: widget.onBiometricUnlock == null ? null : _biometric,
+    secondaryLabel: 'Войти по отпечатку',
   );
 }
 
@@ -733,6 +876,8 @@ class _Gate extends StatelessWidget {
     required this.busy,
     required this.error,
     required this.label,
+    this.secondaryAction,
+    this.secondaryLabel,
   });
   final String title, subtitle, label;
   final TextEditingController controller;
@@ -740,6 +885,8 @@ class _Gate extends StatelessWidget {
   final Future<void> Function() action;
   final bool busy;
   final String? error;
+  final Future<void> Function()? secondaryAction;
+  final String? secondaryLabel;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -797,6 +944,14 @@ class _Gate extends StatelessWidget {
                         )
                       : Text(label),
                 ),
+                if (secondaryAction != null) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : secondaryAction,
+                    icon: const Icon(Icons.fingerprint),
+                    label: Text(secondaryLabel!),
+                  ),
+                ],
               ],
             ),
           ),
@@ -822,6 +977,18 @@ class _EntryTile extends StatefulWidget {
 
 class _EntryTileState extends State<_EntryTile> {
   var _revealed = false;
+  String? get _totp {
+    final field = widget.entry.customFields.where(
+      (item) => item.type == CustomFieldType.oneTimePassword,
+    );
+    if (field.isEmpty) return null;
+    try {
+      return const TotpGenerator().code(field.first.value);
+    } on FormatException {
+      return 'ошибка';
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListTile(
     leading: CircleAvatar(
@@ -830,7 +997,14 @@ class _EntryTileState extends State<_EntryTile> {
       ),
     ),
     title: Text(widget.entry.title),
-    subtitle: Text(_revealed ? widget.entry.password : widget.entry.username),
+    subtitle: Text(
+      _revealed
+          ? widget.entry.password
+          : [
+              widget.entry.username,
+              if (_totp != null) 'TOTP: $_totp',
+            ].where((text) => text.isNotEmpty).join(' · '),
+    ),
     onTap: widget.onEdit,
     trailing: Wrap(
       spacing: -8,

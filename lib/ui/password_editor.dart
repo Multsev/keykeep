@@ -225,8 +225,12 @@ class _PasswordEditorState extends State<PasswordEditor> {
               const SizedBox(height: 12),
               TextField(
                 controller: value,
-                obscureText: type == CustomFieldType.protected,
-                decoration: const InputDecoration(labelText: 'Значение'),
+                obscureText: type != CustomFieldType.text,
+                decoration: InputDecoration(
+                  labelText: type == CustomFieldType.oneTimePassword
+                      ? 'Base32-секрет TOTP'
+                      : 'Значение',
+                ),
               ),
               DropdownButtonFormField<CustomFieldType>(
                 initialValue: type,
@@ -239,6 +243,10 @@ class _PasswordEditorState extends State<PasswordEditor> {
                   DropdownMenuItem(
                     value: CustomFieldType.protected,
                     child: Text('Защищённое'),
+                  ),
+                  DropdownMenuItem(
+                    value: CustomFieldType.oneTimePassword,
+                    child: Text('TOTP (одноразовые коды)'),
                   ),
                 ],
                 onChanged: (next) =>

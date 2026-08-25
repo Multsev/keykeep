@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:keykeep_passwords/domain/password_entry.dart';
 import 'package:keykeep_passwords/domain/vault_folder.dart';
@@ -23,7 +24,10 @@ class YandexVaultSync {
   final http.Client _client;
   final KdbxVaultCodec _codec;
 
-  Future<void> upload({
+  /// Publishes the current vault and an immutable, content-addressed snapshot.
+  /// The snapshot id behaves like a Git commit id: identical vaults have the
+  /// same id and earlier versions are never overwritten.
+  Future<SyncVersion> upload({
     required List<VaultFolder> folders,
     required List<PasswordEntry> entries,
     required String password,
@@ -36,7 +40,14 @@ class YandexVaultSync {
     await _ensureFolder(_historyFolder);
     await _upload(_currentPath, bytes);
     final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(':', '-');
-    await _upload('app:/$_historyFolder/keykeep-$stamp.kdbx', bytes);
+    final id = sha256.convert(bytes).toString().substring(0, 12);
+    final snapshotPath = 'app:/$_historyFolder/$stamp-$id.kdbx';
+    await _upload(snapshotPath, bytes);
+    return SyncVersion(
+      id: id,
+      createdAt: DateTime.now().toUtc(),
+      path: snapshotPath,
+    );
   }
 
   Future<VaultSnapshot> download({required String password}) async {
@@ -88,4 +99,16 @@ class YandexVaultSync {
     if (upload.statusCode < 200 || upload.statusCode >= 300)
       throw StateError('Не удалось загрузить зашифрованную базу.');
   }
+}
+
+class SyncVersion {
+  const SyncVersion({
+    required this.id,
+    required this.createdAt,
+    required this.path,
+  });
+
+  final String id;
+  final DateTime createdAt;
+  final String path;
 }
