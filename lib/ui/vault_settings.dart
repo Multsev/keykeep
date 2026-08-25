@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:keykeep_passwords/services/password_mcp_controller.dart';
+import 'package:keykeep_passwords/services/yandex_disk_oauth.dart';
+import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
 import 'package:keykeep_passwords/ui/mcp_settings.dart';
+import 'package:keykeep_passwords/ui/yandex_disk_settings.dart';
 
 class VaultSettings extends StatefulWidget {
   const VaultSettings({
@@ -14,6 +17,10 @@ class VaultSettings extends StatefulWidget {
     required this.onExportVault,
     required this.onDeleteVault,
     required this.mcpController,
+    required this.yandexOAuth,
+    required this.yandexSync,
+    required this.onYandexUpload,
+    required this.onYandexDownload,
   });
 
   final bool biometricEnabled;
@@ -25,6 +32,10 @@ class VaultSettings extends StatefulWidget {
   final Future<void> Function() onExportVault;
   final Future<void> Function() onDeleteVault;
   final PasswordMcpController mcpController;
+  final YandexDiskOAuthService yandexOAuth;
+  final YandexVaultSync yandexSync;
+  final Future<void> Function() onYandexUpload;
+  final Future<void> Function() onYandexDownload;
 
   @override
   State<VaultSettings> createState() => _VaultSettingsState();
@@ -98,6 +109,22 @@ class _VaultSettingsState extends State<VaultSettings> {
             },
           ),
         const _SectionTitle('Интеграции'),
+        ListTile(
+          leading: const Icon(Icons.cloud_outlined),
+          title: const Text('Яндекс Диск'),
+          subtitle: const Text('Подключение и синхронизация хранилища'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => YandexDiskSettings(
+                oauth: widget.yandexOAuth,
+                sync: widget.yandexSync,
+                onUpload: widget.onYandexUpload,
+                onDownload: widget.onYandexDownload,
+              ),
+            ),
+          ),
+        ),
         ListTile(
           leading: const Icon(Icons.memory_outlined),
           title: const Text('MCP для ИИ'),

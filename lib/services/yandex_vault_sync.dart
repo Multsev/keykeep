@@ -18,11 +18,41 @@ class YandexVaultSync {
   }) : _oauth = oauth ?? YandexDiskOAuthService(),
        _client = client ?? http.Client(),
        _codec = codec ?? KdbxVaultCodec();
-  static const _currentPath = 'app:/keykeep-vault.kdbx';
-  static const _historyFolder = 'keykeep-history';
+  static const _vaultFileName = 'keykeep-vault.kdbx';
+  static const _historyFolderName = 'keykeep-history';
   final YandexDiskOAuthService _oauth;
   final http.Client _client;
   final KdbxVaultCodec _codec;
+
+  Future<List<String>> listFolders() async {
+    final token = await _oauth.token();
+    final response = await _client.get(
+      Uri.https('cloud-api.yandex.net', '/v1/disk/resources', {
+        'path': 'app:/',
+        'limit': '1000',
+      }),
+      headers: {'Authorization': 'OAuth $token'},
+    );
+    if (response.statusCode != 200) {
+      throw StateError('Не удалось получить список папок на Яндекс Диске.');
+    }
+    final items =
+        (jsonDecode(response.body)
+                as Map<String, dynamic>)['_embedded']?['items']
+            as List<dynamic>? ??
+        const [];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .where((item) => item['type'] == 'dir')
+        .map((item) => item['name'] as String)
+        .toList()
+      ..sort();
+  }
+
+  Future<void> prepareFolder(String folder) async {
+    await _ensureFolder(folder);
+    await _ensureFolder('$folder/$_historyFolderName');
+  }
 
   /// Publishes the current vault and an immutable, content-addressed snapshot.
   /// The snapshot id behaves like a Git commit id: identical vaults have the
@@ -37,11 +67,12 @@ class YandexVaultSync {
       entries: entries,
       password: password,
     );
-    await _ensureFolder(_historyFolder);
-    await _upload(_currentPath, bytes);
+    final folder = await _oauth.syncFolder();
+    await prepareFolder(folder);
+    await _upload(_currentPath(folder), bytes);
     final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(':', '-');
     final id = sha256.convert(bytes).toString().substring(0, 12);
-    final snapshotPath = 'app:/$_historyFolder/$stamp-$id.kdbx';
+    final snapshotPath = 'app:/$folder/$_historyFolderName/$stamp-$id.kdbx';
     await _upload(snapshotPath, bytes);
     return SyncVersion(
       id: id,
@@ -52,9 +83,10 @@ class YandexVaultSync {
 
   Future<VaultSnapshot> download({required String password}) async {
     final token = await _oauth.token();
+    final folder = await _oauth.syncFolder();
     final response = await _client.get(
       Uri.https('cloud-api.yandex.net', '/v1/disk/resources/download', {
-        'path': _currentPath,
+        'path': _currentPath(folder),
       }),
       headers: {'Authorization': 'OAuth $token'},
     );
@@ -99,6 +131,8 @@ class YandexVaultSync {
     if (upload.statusCode < 200 || upload.statusCode >= 300)
       throw StateError('Не удалось загрузить зашифрованную базу.');
   }
+
+  String _currentPath(String folder) => 'app:/$folder/$_vaultFileName';
 }
 
 class SyncVersion {

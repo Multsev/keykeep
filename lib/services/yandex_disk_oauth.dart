@@ -21,6 +21,7 @@ class YandexDiskOAuthService {
   static const _stateKey = 'yandex_disk_state';
   static const _verifierKey = 'yandex_disk_verifier';
   static const _clientIdKey = 'yandex_disk_client_id';
+  static const _syncFolderKey = 'yandex_disk_sync_folder';
   final FlutterSecureStorage _storage;
   final http.Client _client;
 
@@ -97,6 +98,27 @@ class YandexDiskOAuthService {
     if (normalized.isEmpty)
       throw ArgumentError.value(value, 'value', 'Client ID is required.');
     await _storage.write(key: _clientIdKey, value: normalized);
+  }
+
+  /// Folder names are deliberately limited to one level inside app:/ so an
+  /// OAuth token with app-folder scope can never address arbitrary Disk paths.
+  Future<String> syncFolder() async =>
+      (await _storage.read(key: _syncFolderKey)) ?? 'KeyKeep';
+
+  Future<void> saveSyncFolder(String value) async {
+    final normalized = value.trim();
+    if (normalized.isEmpty ||
+        normalized == '.' ||
+        normalized == '..' ||
+        normalized.contains('/') ||
+        normalized.contains('\\')) {
+      throw ArgumentError.value(
+        value,
+        'value',
+        'Имя папки не должно содержать путь.',
+      );
+    }
+    await _storage.write(key: _syncFolderKey, value: normalized);
   }
 
   static String _challenge(String value) => base64Url
