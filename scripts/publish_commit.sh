@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds a compact, signed calendar-versioned release for the current commit
+# Builds a compact, debug-signed calendar-versioned APK for personal development
 # and mirrors the same APK to the local Release folder and Yandex Disk.
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -11,13 +11,6 @@ if [[ -f .env ]]; then
   source .env
   set +a
 fi
-
-for required in ANDROID_KEYSTORE_PATH ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-  if [[ -z "${!required:-}" ]]; then
-    echo "Missing $required. Cannot produce a signed release." >&2
-    exit 1
-  fi
-done
 
 commit="$(git rev-parse HEAD)"
 short_commit="$(git rev-parse --short=12 HEAD)"

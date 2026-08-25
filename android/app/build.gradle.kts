@@ -29,25 +29,11 @@ android {
         versionName = flutter.versionName
     }
 
-    val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
-    val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-    val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
-    val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
-
-    signingConfigs {
-        create("release") {
-            if (releaseStoreFile != null && releaseStorePassword != null && releaseKeyAlias != null && releaseKeyPassword != null) {
-                storeFile = rootProject.file(releaseStoreFile)
-                storePassword = releaseStorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeyPassword
-            }
-        }
-    }
-
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // Personal-development distribution, matching Project Pulse. Do not
+            // use this certificate for any public password-manager release.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 }
