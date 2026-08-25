@@ -148,6 +148,38 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _finishFirstVaultSetup(String pin) async {
+    await widget.repository.createMasterPin(pin);
+    if (!mounted) return;
+    // A newly created vault is already authenticated by the PIN confirmation.
+    setState(() => _hasMasterPin = true);
+    await _unlock(pin);
+    if (!mounted) return;
+    final biometricAvailable = await _biometric.isAvailable();
+    if (!mounted || !biometricAvailable) return;
+    final enable = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.fingerprint),
+        title: const Text('Включить вход по биометрии?'),
+        content: const Text(
+          'При следующих открытиях можно будет разблокировать хранилище отпечатком пальца или лицом.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Позже'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Включить'),
+          ),
+        ],
+      ),
+    );
+    if (enable == true && mounted) await _configureBiometrics();
+  }
+
   Future<void> _save(PasswordEntry entry) async {
     final index = _entries.indexWhere((item) => item.id == entry.id);
     setState(() {
@@ -568,12 +600,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (!hasPin) {
-      return _CreatePinScreen(
-        onCreated: (pin) async {
-          await widget.repository.createMasterPin(pin);
-          if (mounted) await _load();
-        },
-      );
+      return _CreatePinScreen(onCreated: _finishFirstVaultSetup);
     }
     return _unlocked
         ? _vault(context)
