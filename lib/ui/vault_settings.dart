@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:keykeep_passwords/services/password_mcp_controller.dart';
+import 'package:keykeep_passwords/ui/mcp_settings.dart';
 
 class VaultSettings extends StatefulWidget {
   const VaultSettings({
@@ -11,6 +13,7 @@ class VaultSettings extends StatefulWidget {
     required this.onImportVault,
     required this.onExportVault,
     required this.onDeleteVault,
+    required this.mcpController,
   });
 
   final bool biometricEnabled;
@@ -21,6 +24,7 @@ class VaultSettings extends StatefulWidget {
   final Future<void> Function() onImportVault;
   final Future<void> Function() onExportVault;
   final Future<void> Function() onDeleteVault;
+  final PasswordMcpController mcpController;
 
   @override
   State<VaultSettings> createState() => _VaultSettingsState();
@@ -93,6 +97,22 @@ class _VaultSettingsState extends State<VaultSettings> {
               if (mounted) setState(() => _autoPrompt = enabled);
             },
           ),
+        const _SectionTitle('Интеграции'),
+        ListTile(
+          leading: const Icon(Icons.memory_outlined),
+          title: const Text('MCP для ИИ'),
+          subtitle: Text(
+            widget.mcpController.isRunning
+                ? 'Локальный сервер включён'
+                : 'Локальный доступ к хранилищу выключен',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => McpSettings(controller: widget.mcpController),
+            ),
+          ),
+        ),
         const _SectionTitle('Хранилище'),
         ListTile(
           leading: const Icon(Icons.folder_open_outlined),

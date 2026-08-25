@@ -199,6 +199,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         onImportVault: _importKdbx,
         onExportVault: _exportKdbx,
         onDeleteVault: _deleteVault,
+        mcpController: _mcp,
       ),
     ),
   );
@@ -425,71 +426,6 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     return true;
   }
 
-  Future<void> _showMcpSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, refresh) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: const Text('Доступ ИИ по MCP'),
-                subtitle: Text(
-                  _mcp.isRunning
-                      ? _mcp.endpoint!
-                      : 'Выключен — пароли недоступны по сети',
-                ),
-              ),
-              SwitchListTile(
-                title: const Text('Разрешить редактирование'),
-                value: _mcp.readWrite,
-                onChanged: (value) async {
-                  await _mcp.setReadWrite(value);
-                  refresh(() {});
-                },
-              ),
-              if (!_mcp.isRunning)
-                ListTile(
-                  leading: const Icon(Icons.play_arrow),
-                  title: const Text('Запустить сервер'),
-                  onTap: () async {
-                    await _mcp.start(readWrite: _mcp.readWrite);
-                    refresh(() {});
-                  },
-                ),
-              if (_mcp.isRunning) ...[
-                ListTile(
-                  leading: const Icon(Icons.stop),
-                  title: const Text('Остановить сервер'),
-                  onTap: () async {
-                    await _mcp.stop();
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.vpn_key_outlined),
-                  title: const Text('Обновить токен'),
-                  onTap: () async {
-                    await _mcp.rotateToken();
-                    refresh(() {});
-                  },
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: SelectableText(
-                    _mcp.connectionCommand,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _addFolder() async {
     final controller = TextEditingController();
     var parentId = _folderId;
@@ -526,11 +462,6 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
             ],
           ),
           actions: [
-            IconButton(
-              onPressed: _showMcpSheet,
-              icon: const Icon(Icons.memory_outlined),
-              tooltip: 'MCP для ИИ',
-            ),
             IconButton(
               onPressed: _showSyncSheet,
               icon: const Icon(Icons.cloud_sync_outlined),
