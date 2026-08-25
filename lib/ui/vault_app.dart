@@ -611,16 +611,37 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   }
 
   Widget _vault(BuildContext context) {
-    final visible = _entries.where((entry) {
-      final searchable = '${entry.title} ${entry.username} ${entry.website}';
-      return (_folderId == 'root' ||
-              _folderTreeIds(_folderId).contains(entry.folderId)) &&
-          searchable.toLowerCase().contains(_query.toLowerCase());
-    }).toList();
+    final searching = _query.trim().isNotEmpty;
+    final visible =
+        _entries.where((entry) {
+          final searchable =
+              '${entry.title} ${entry.username} ${entry.website}';
+          return (searching || entry.folderId == _folderId) &&
+              searchable.toLowerCase().contains(_query.toLowerCase());
+        }).toList()..sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
+    final childFolders =
+        searching
+              ? const <VaultFolder>[]
+              : _folders
+                    .where(
+                      (folder) =>
+                          folder.id != 'root' && folder.parentId == _folderId,
+                    )
+                    .toList()
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
     return Scaffold(
       appBar: AppBar(
         title: const Text('KeyKeep'),
         actions: [
+          IconButton(
+            onPressed: _addFolder,
+            icon: const Icon(Icons.create_new_folder_outlined),
+            tooltip: 'Новая папка',
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'import') _importKdbx();
@@ -679,31 +700,13 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
               onChanged: (value) => setState(() => _query = value),
             ),
           ),
-          SizedBox(
-            height: 44,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: [
-                for (final folder in _folders)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(_folderLabel(folder)),
-                      selected: _folderId == folder.id,
-                      onSelected: (_) => setState(() => _folderId = folder.id),
-                    ),
-                  ),
-                IconButton(
-                  onPressed: _addFolder,
-                  icon: const Icon(Icons.create_new_folder_outlined),
-                  tooltip: 'Новая папка',
-                ),
-              ],
+          if (!searching)
+            _FolderBreadcrumbs(
+              folders: _folderPath(_folderId),
+              onOpen: (folder) => setState(() => _folderId = folder.id),
             ),
-          ),
           Expanded(
-            child: visible.isEmpty
+            child: visible.isEmpty && childFolders.isEmpty
                 ? Center(
                     child: Text(
                       _entries.isEmpty
@@ -712,15 +715,36 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                       textAlign: TextAlign.center,
                     ),
                   )
-                : ListView.separated(
-                    itemCount: visible.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, index) => _EntryTile(
-                      entry: visible[index],
-                      onEdit: () => _edit(visible[index]),
-                      onDelete: () => _delete(visible[index]),
-                      onHistory: () => _showPasswordHistory(visible[index]),
-                    ),
+                : ListView(
+                    children: [
+                      for (final folder in childFolders) ...[
+                        ListTile(
+                          leading: const Icon(Icons.folder_outlined),
+                          title: Text(folder.name),
+                          subtitle: Text(_folderContentsLabel(folder.id)),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => setState(() => _folderId = folder.id),
+                        ),
+                        const Divider(height: 1),
+                      ],
+                      if (childFolders.isNotEmpty && visible.isNotEmpty)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 16, 16, 6),
+                          child: Text('Записи'),
+                        ),
+                      for (final entry in visible) ...[
+                        _EntryTile(
+                          entry: entry,
+                          folderPath: searching
+                              ? _folderPathText(entry.folderId)
+                              : null,
+                          onEdit: () => _edit(entry),
+                          onDelete: () => _delete(entry),
+                          onHistory: () => _showPasswordHistory(entry),
+                        ),
+                        const Divider(height: 1),
+                      ],
+                    ],
                   ),
           ),
         ],
@@ -761,17 +785,34 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     ),
   );
 
-  Set<String> _folderTreeIds(String rootId) {
-    final ids = <String>{rootId};
-    var expanded = true;
-    while (expanded) {
-      expanded = false;
-      for (final folder in _folders) {
-        if (ids.contains(folder.parentId) && ids.add(folder.id))
-          expanded = true;
-      }
+  List<VaultFolder> _folderPath(String folderId) {
+    final path = <VaultFolder>[];
+    var currentId = folderId;
+    while (true) {
+      final matches = _folders.where((folder) => folder.id == currentId);
+      if (matches.isEmpty) break;
+      final folder = matches.first;
+      path.insert(0, folder);
+      if (folder.id == 'root') break;
+      currentId = folder.parentId;
     }
-    return ids;
+    return path;
+  }
+
+  String _folderPathText(String folderId) =>
+      _folderPath(folderId).map((folder) => folder.name).join(' › ');
+
+  String _folderContentsLabel(String folderId) {
+    final nestedFolders = _folders
+        .where((folder) => folder.parentId == folderId)
+        .length;
+    final entries = _entries
+        .where((entry) => entry.folderId == folderId)
+        .length;
+    final parts = <String>[];
+    if (nestedFolders > 0) parts.add('$nestedFolders папок');
+    if (entries > 0) parts.add('$entries записей');
+    return parts.isEmpty ? 'Пустая папка' : parts.join(' · ');
   }
 
   String _folderLabel(VaultFolder folder) {
@@ -785,6 +826,32 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     }
     return '${'› ' * depth}${folder.name}';
   }
+}
+
+class _FolderBreadcrumbs extends StatelessWidget {
+  const _FolderBreadcrumbs({required this.folders, required this.onOpen});
+
+  final List<VaultFolder> folders;
+  final ValueChanged<VaultFolder> onOpen;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 44,
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: folders.length,
+      separatorBuilder: (_, _) => const Icon(Icons.chevron_right, size: 18),
+      itemBuilder: (_, index) {
+        final folder = folders[index];
+        final current = index == folders.length - 1;
+        return TextButton(
+          onPressed: current ? null : () => onOpen(folder),
+          child: Text(folder.name),
+        );
+      },
+    ),
+  );
 }
 
 class _UnlockScreen extends StatefulWidget {
@@ -991,11 +1058,13 @@ class _Gate extends StatelessWidget {
 class _EntryTile extends StatefulWidget {
   const _EntryTile({
     required this.entry,
+    this.folderPath,
     required this.onEdit,
     required this.onDelete,
     required this.onHistory,
   });
   final PasswordEntry entry;
+  final String? folderPath;
   final VoidCallback onEdit, onDelete;
   final VoidCallback onHistory;
   @override
@@ -1028,6 +1097,7 @@ class _EntryTileState extends State<_EntryTile> {
       _revealed
           ? widget.entry.password
           : [
+              if (widget.folderPath != null) widget.folderPath!,
               widget.entry.username,
               if (_totp != null) 'TOTP: $_totp',
             ].where((text) => text.isNotEmpty).join(' · '),
