@@ -49,6 +49,14 @@ app.*.map.json
 
 # Release credentials and locally staged distributables
 .env
+.env.*
+!.env.example
 /Release/
+*.apk
+*.aab
+*.kdbx
+*.keyx
 *.jks
 *.keystore
+*.pem
+*.p12
