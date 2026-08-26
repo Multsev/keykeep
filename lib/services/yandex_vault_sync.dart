@@ -28,7 +28,7 @@ class YandexVaultSync {
     final token = await _oauth.token();
     final response = await _client.get(
       Uri.https('cloud-api.yandex.net', '/v1/disk/resources', {
-        'path': 'app:/',
+        'path': 'disk:/',
         'limit': '1000',
       }),
       headers: {'Authorization': 'OAuth $token'},
@@ -52,6 +52,40 @@ class YandexVaultSync {
   Future<void> prepareFolder(String folder) async {
     await _ensureFolder(folder);
     await _ensureFolder('$folder/$_historyFolderName');
+  }
+
+  Future<List<CloudVaultVersion>> listVersions() async {
+    final token = await _oauth.token();
+    final folder = await _oauth.syncFolder();
+    final response = await _client.get(
+      Uri.https('cloud-api.yandex.net', '/v1/disk/resources', {
+        'path': 'disk:/$folder/$_historyFolderName',
+        'limit': '1000',
+      }),
+      headers: {'Authorization': 'OAuth $token'},
+    );
+    if (response.statusCode == 404) return const [];
+    if (response.statusCode != 200) {
+      throw StateError('Не удалось получить историю облачных версий.');
+    }
+    final items =
+        (jsonDecode(response.body)
+                as Map<String, dynamic>)['_embedded']?['items']
+            as List<dynamic>? ??
+        const [];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .where((item) => item['type'] == 'file')
+        .where((item) => (item['name'] as String).endsWith('.kdbx'))
+        .map(
+          (item) => CloudVaultVersion(
+            name: item['name'] as String,
+            modifiedAt: DateTime.parse(item['modified'] as String).toLocal(),
+            size: item['size'] as int? ?? 0,
+          ),
+        )
+        .toList()
+      ..sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
   }
 
   Future<RemoteVaultInfo?> remoteInfo() async {
@@ -110,6 +144,7 @@ class YandexVaultSync {
     );
     final folder = await _oauth.syncFolder();
     await prepareFolder(folder);
+    await _backupCurrentCloudVersion(folder);
     await _upload(_currentPath(folder), bytes);
     return _uploadSnapshot(folder: folder, prefix: 'cloud', bytes: bytes);
   }
@@ -139,7 +174,7 @@ class YandexVaultSync {
     final token = await _oauth.token();
     final response = await _client.put(
       Uri.https('cloud-api.yandex.net', '/v1/disk/resources', {
-        'path': 'app:/$name',
+        'path': 'disk:/$name',
       }),
       headers: {'Authorization': 'OAuth $token'},
     );
@@ -165,6 +200,33 @@ class YandexVaultSync {
       throw StateError('Не удалось загрузить зашифрованную базу.');
   }
 
+  /// A desktop KeePass client may have written the shared file since the phone
+  /// last used it. Preserve that exact cloud file before the phone replaces it.
+  Future<void> _backupCurrentCloudVersion(String folder) async {
+    final token = await _oauth.token();
+    final response = await _client.get(
+      Uri.https('cloud-api.yandex.net', '/v1/disk/resources/download', {
+        'path': _currentPath(folder),
+      }),
+      headers: {'Authorization': 'OAuth $token'},
+    );
+    if (response.statusCode == 404) return;
+    final href =
+        (jsonDecode(response.body) as Map<String, dynamic>)['href'] as String?;
+    if (response.statusCode != 200 || href == null) {
+      throw StateError('Не удалось сохранить предыдущую облачную версию.');
+    }
+    final file = await _client.get(Uri.parse(href));
+    if (file.statusCode != 200) {
+      throw StateError('Не удалось скачать предыдущую облачную версию.');
+    }
+    await _uploadSnapshot(
+      folder: folder,
+      prefix: 'cloud-before-upload',
+      bytes: Uint8List.fromList(file.bodyBytes),
+    );
+  }
+
   Future<SyncVersion> _uploadSnapshot({
     required String folder,
     required String prefix,
@@ -173,16 +235,27 @@ class YandexVaultSync {
     final createdAt = DateTime.now().toUtc();
     final stamp = createdAt.toIso8601String().replaceAll(':', '-');
     final id = sha256.convert(bytes).toString().substring(0, 12);
-    final path = 'app:/$folder/$_historyFolderName/$prefix-$stamp-$id.kdbx';
+    final path = 'disk:/$folder/$_historyFolderName/$prefix-$stamp-$id.kdbx';
     await _upload(path, bytes);
     return SyncVersion(id: id, createdAt: createdAt, path: path);
   }
 
-  String _currentPath(String folder) => 'app:/$folder/$_vaultFileName';
+  String _currentPath(String folder) => 'disk:/$folder/$_vaultFileName';
 }
 
 class RemoteVaultInfo {
   const RemoteVaultInfo({required this.modifiedAt, required this.size});
+  final DateTime modifiedAt;
+  final int size;
+}
+
+class CloudVaultVersion {
+  const CloudVaultVersion({
+    required this.name,
+    required this.modifiedAt,
+    required this.size,
+  });
+  final String name;
   final DateTime modifiedAt;
   final int size;
 }

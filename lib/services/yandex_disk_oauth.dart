@@ -43,7 +43,7 @@ class YandexDiskOAuthService {
       'response_type': 'code',
       'client_id': appClientId,
       'redirect_uri': redirectUri,
-      'scope': 'cloud_api:disk.app_folder',
+      'scope': 'cloud_api:disk.read cloud_api:disk.write',
       'state': state,
       'code_challenge': _challenge(verifier),
       'code_challenge_method': 'S256',
@@ -100,8 +100,8 @@ class YandexDiskOAuthService {
     await _storage.write(key: _clientIdKey, value: normalized);
   }
 
-  /// Folder names are deliberately limited to one level inside app:/ so an
-  /// OAuth token with app-folder scope can never address arbitrary Disk paths.
+  /// The selected folder is created in the user's regular Disk root so desktop
+  /// KeePass can open the same KDBX file.
   Future<String> syncFolder() async =>
       (await _storage.read(key: _syncFolderKey)) ?? 'KeyKeep';
 

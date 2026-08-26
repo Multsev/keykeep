@@ -29,6 +29,7 @@ class _YandexDiskSettingsState extends State<YandexDiskSettings>
   var _connected = false;
   var _folder = 'KeyKeep';
   List<String> _folders = const [];
+  List<CloudVaultVersion> _versions = const [];
 
   @override
   void initState() {
@@ -55,6 +56,7 @@ class _YandexDiskSettingsState extends State<YandexDiskSettings>
     if (connected) {
       try {
         folders = await widget.sync.listFolders();
+        _versions = await widget.sync.listVersions();
       } catch (_) {
         // Connection errors are shown only after an explicit user action.
       }
@@ -108,7 +110,7 @@ class _YandexDiskSettingsState extends State<YandexDiskSettings>
               controller: controller,
               decoration: const InputDecoration(
                 labelText: 'Имя новой или существующей папки',
-                helperText: 'Папка создаётся внутри защищённой папки KeyKeep.',
+                helperText: 'Папка создаётся в корне вашего Яндекс Диска.',
               ),
             ),
           ],
@@ -163,7 +165,7 @@ class _YandexDiskSettingsState extends State<YandexDiskSettings>
               ),
               const SizedBox(height: 4),
               const Text(
-                'Хранилище сохраняется как зашифрованный KeePass-файл. Для каждой загрузки создаётся отдельная версия.',
+                'Один KDBX-файл можно открыть и в KeyKeep, и в KeePass на ПК. Для каждой загрузки создаётся отдельная версия.',
               ),
               const SizedBox(height: 16),
               Card(
@@ -226,18 +228,47 @@ class _YandexDiskSettingsState extends State<YandexDiskSettings>
                   icon: const Icon(Icons.cloud_download_outlined),
                   label: const Text('Восстановить хранилище с Диска'),
                 ),
+                if (_versions.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  Text(
+                    'История версий',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  Card(
+                    child: Column(
+                      children: _versions
+                          .take(5)
+                          .map(
+                            (version) => ListTile(
+                              dense: true,
+                              leading: const Icon(Icons.history_outlined),
+                              title: Text(_formatDate(version.modifiedAt)),
+                              subtitle: Text(
+                                '${version.size ~/ 1024} КБ · ${version.name.startsWith('local-before-restore') ? 'локальная копия перед восстановлением' : 'снимок синхронизации'}',
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                ],
               ],
               const SizedBox(height: 12),
               const Card(
                 child: ListTile(
                   leading: Icon(Icons.lock_outline),
-                  title: Text('Защищённая папка приложения'),
+                  title: Text('Общая папка Яндекс Диска'),
                   subtitle: Text(
-                    'KeyKeep видит только свои папки на вашем Яндекс Диске. Другие файлы Диска недоступны.',
+                    'Выберите отдельную папку для KeyKeep. Этот же файл keykeep-vault.kdbx можно открыть в KeePass на ПК.',
                   ),
                 ),
               ),
             ],
           ),
   );
+
+  String _formatDate(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year} '
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 }
