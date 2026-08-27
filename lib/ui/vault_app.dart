@@ -429,11 +429,25 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     final password = _vaultPassword;
     if (password == null) return;
     try {
+      final remote = await _sync.remoteInfo();
+      final lastSync = await widget.repository.lastCloudSyncAt();
+      final localModified = await widget.repository.vaultModifiedAt();
+      if (remote != null &&
+          lastSync != null &&
+          remote.modifiedAt.isAfter(lastSync) &&
+          localModified.isAfter(lastSync) &&
+          !await _confirmSyncConflict(
+            localModifiedAt: localModified,
+            remoteModifiedAt: remote.modifiedAt,
+          )) {
+        return;
+      }
       final version = await _sync.upload(
         folders: _folders,
         entries: _entries,
         password: password,
       );
+      await widget.repository.markCloudSynced();
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -447,6 +461,89 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
     }
+  }
+
+  Future<bool> _confirmSyncConflict({
+    required DateTime localModifiedAt,
+    required DateTime remoteModifiedAt,
+  }) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.sync_problem_outlined),
+        title: const Text('Конфликт синхронизации'),
+        content: Text(
+          'И локальная база (${_formatDate(localModifiedAt)}), и версия на Диске (${_formatDate(remoteModifiedAt)}) менялись после последней синхронизации.\n\n'
+          'При продолжении локальная версия станет основной, а текущая облачная автоматически сохранится в истории.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'cancel'),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'restore'),
+            child: const Text('Восстановить с Диска'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'merge'),
+            child: const Text('Объединить'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'local'),
+            child: const Text('Оставить локальное'),
+          ),
+        ],
+      ),
+    );
+    if (choice == 'restore') {
+      await _syncDownload();
+      return false;
+    }
+    if (choice == 'merge') {
+      final password = _vaultPassword;
+      if (password == null) return false;
+      final cloud = await _sync.download(password: password);
+      final merged = _mergeWithCloud(cloud);
+      setState(() {
+        _folders = merged.folders;
+        _entries = merged.entries;
+      });
+      await widget.repository.saveFolders(_folders);
+      await widget.repository.saveEntries(_entries);
+      return true;
+    }
+    return choice == 'local';
+  }
+
+  VaultSnapshot _mergeWithCloud(VaultSnapshot cloud) {
+    final folders = <String, VaultFolder>{
+      for (final folder in cloud.folders) folder.id: folder,
+      for (final folder in _folders) folder.id: folder,
+    };
+    // KDBX UUIDs are stable across devices. For an entry edited on both sides,
+    // retain the newer current state and append the older state to its history.
+    final entries = <String, PasswordEntry>{
+      for (final entry in cloud.entries) entry.id: entry,
+    };
+    for (final local in _entries) {
+      final remote = entries[local.id];
+      if (remote == null) {
+        entries[local.id] = local;
+      } else if (local.updatedAt.isAfter(remote.updatedAt)) {
+        entries[local.id] = local.copyWith(
+          history: [...local.history, remote.revision()],
+        );
+      } else if (remote.updatedAt.isAfter(local.updatedAt)) {
+        entries[local.id] = remote.copyWith(
+          history: [...remote.history, local.revision()],
+        );
+      }
+    }
+    return VaultSnapshot(
+      folders: folders.values.toList(),
+      entries: entries.values.toList(),
+    );
   }
 
   Future<void> _syncDownload() async {
@@ -482,6 +579,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       });
       await widget.repository.saveFolders(_folders);
       await widget.repository.saveEntries(_entries);
+      await widget.repository.markCloudSynced();
       if (mounted)
         _showMessage(
           'Данные восстановлены. Локальная версия сохранена в истории на Диске.',

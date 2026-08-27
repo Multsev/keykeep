@@ -20,6 +20,7 @@ class VaultRepository {
   static const _vaultModifiedAtKey = 'vault_modified_at';
   static const _failedUnlockCountKey = 'failed_unlock_count';
   static const _unlockBlockedUntilKey = 'unlock_blocked_until';
+  static const _lastCloudSyncKey = 'last_cloud_sync_at';
   final FlutterSecureStorage _storage;
   final MasterPin _masterPin;
 
@@ -128,6 +129,7 @@ class VaultRepository {
       _vaultModifiedAtKey,
       _failedUnlockCountKey,
       _unlockBlockedUntilKey,
+      _lastCloudSyncKey,
     ]) {
       await _storage.delete(key: key);
     }
@@ -178,6 +180,16 @@ class VaultRepository {
         .map((entry) => entry.updatedAt)
         .reduce((latest, value) => value.isAfter(latest) ? value : latest);
   }
+
+  Future<DateTime?> lastCloudSyncAt() async {
+    final source = await _storage.read(key: _lastCloudSyncKey);
+    return source == null ? null : DateTime.tryParse(source)?.toLocal();
+  }
+
+  Future<void> markCloudSynced() => _storage.write(
+    key: _lastCloudSyncKey,
+    value: DateTime.now().toUtc().toIso8601String(),
+  );
 
   Future<void> _touchVault() => _storage.write(
     key: _vaultModifiedAtKey,
