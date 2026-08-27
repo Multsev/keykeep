@@ -12,6 +12,7 @@ import 'package:keykeep_passwords/domain/vault_folder.dart';
 import 'package:keykeep_passwords/services/kdbx_vault_codec.dart';
 import 'package:keykeep_passwords/services/biometric_unlock.dart';
 import 'package:keykeep_passwords/services/totp_generator.dart';
+import 'package:keykeep_passwords/services/contact_formatter.dart';
 import 'package:keykeep_passwords/services/yandex_disk_oauth.dart';
 import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
 import 'package:keykeep_passwords/services/password_mcp_controller.dart';
@@ -1236,7 +1237,14 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                           onEdit: () => _edit(entry),
                           onDelete: () => _delete(entry),
                           onHistory: () => _showPasswordHistory(entry),
-                          onOpenWebsite: () => _openWebsite(entry.website),
+                          onOpenWebsite: () => _openWebsite(
+                            entry.website.isNotEmpty
+                                ? entry.website
+                                : const ContactFormatter().websiteInText(
+                                        entry.note,
+                                      ) ??
+                                      '',
+                          ),
                         ),
                       );
                     },
@@ -1662,6 +1670,10 @@ class _EntryTileState extends State<_EntryTile> {
     }
   }
 
+  String? get _website => widget.entry.website.isNotEmpty
+      ? widget.entry.website
+      : const ContactFormatter().websiteInText(widget.entry.note);
+
   @override
   Widget build(BuildContext context) => ListTile(
     leading: CircleAvatar(
@@ -1670,15 +1682,7 @@ class _EntryTileState extends State<_EntryTile> {
       ),
     ),
     title: Text(widget.entry.title),
-    subtitle: Text(
-      _revealed
-          ? widget.entry.password
-          : [
-              if (widget.folderPath != null) widget.folderPath!,
-              widget.entry.username,
-              if (_totp != null) 'TOTP: $_totp',
-            ].where((text) => text.isNotEmpty).join(' · '),
-    ),
+    subtitle: _revealed ? Text(widget.entry.password) : _subtitle(context),
     onTap: widget.onEdit,
     trailing: Wrap(
       spacing: -8,
@@ -1705,7 +1709,7 @@ class _EntryTileState extends State<_EntryTile> {
             if (value == 'website') widget.onOpenWebsite();
           },
           itemBuilder: (_) => [
-            if (widget.entry.website.trim().isNotEmpty)
+            if (_website != null)
               const PopupMenuItem(
                 value: 'website',
                 child: Text('Открыть сайт'),
@@ -1720,6 +1724,32 @@ class _EntryTileState extends State<_EntryTile> {
       ],
     ),
   );
+
+  Widget _subtitle(BuildContext context) {
+    final normal = [
+      if (widget.folderPath != null) widget.folderPath!,
+      widget.entry.username,
+      if (_totp != null) 'TOTP: $_totp',
+    ].where((text) => text.isNotEmpty).join(' · ');
+    final website = _website;
+    if (website == null) return Text(normal);
+    return Text.rich(
+      TextSpan(
+        children: [
+          if (normal.isNotEmpty) TextSpan(text: '$normal\n'),
+          TextSpan(
+            text: website,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+              decoration: TextDecoration.underline,
+            ),
+          ),
+        ],
+      ),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
 
   Future<void> _copyPassword() async {
     final password = widget.entry.password;

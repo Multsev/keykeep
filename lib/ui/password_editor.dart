@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:keykeep_passwords/domain/password_entry.dart';
 import 'package:keykeep_passwords/domain/vault_folder.dart';
 import 'package:keykeep_passwords/services/password_generator.dart';
+import 'package:keykeep_passwords/services/contact_formatter.dart';
 
 class PasswordEditor extends StatefulWidget {
   const PasswordEditor({super.key, required this.folders, this.entry});
@@ -52,13 +53,14 @@ class _PasswordEditorState extends State<PasswordEditor> {
   void _save() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final current = widget.entry;
+    const formatter = ContactFormatter();
     final entry = current == null
         ? PasswordEntry(
             id: DateTime.now().microsecondsSinceEpoch.toString(),
             title: _title.text.trim(),
-            username: _username.text.trim(),
+            username: formatter.username(_username.text),
             password: _password.text,
-            website: _website.text.trim(),
+            website: formatter.website(_website.text),
             note: _note.text.trim(),
             updatedAt: DateTime.now(),
             folderId: _folderId,
@@ -66,9 +68,9 @@ class _PasswordEditorState extends State<PasswordEditor> {
           )
         : current.copyWith(
             title: _title.text.trim(),
-            username: _username.text.trim(),
+            username: formatter.username(_username.text),
             password: _password.text,
-            website: _website.text.trim(),
+            website: formatter.website(_website.text),
             note: _note.text.trim(),
             folderId: _folderId,
             customFields: _customFields,
