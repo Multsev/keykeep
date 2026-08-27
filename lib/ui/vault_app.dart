@@ -1134,10 +1134,21 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                       textAlign: TextAlign.center,
                     ),
                   )
-                : ListView(
-                    children: [
-                      for (final folder in childFolders) ...[
-                        Semantics(
+                : ListView.builder(
+                    // Build only visible rows: a large KeePass import must not
+                    // create thousands of Flutter widgets at once.
+                    itemCount:
+                        childFolders.length * 2 +
+                        (childFolders.isNotEmpty && visible.isNotEmpty
+                            ? 1
+                            : 0) +
+                        visible.length * 2,
+                    itemBuilder: (context, index) {
+                      final folderRows = childFolders.length * 2;
+                      if (index < folderRows) {
+                        if (index.isOdd) return const Divider(height: 1);
+                        final folder = childFolders[index ~/ 2];
+                        return Semantics(
                           label:
                               '${folder.name}, ${_folderContentsLabel(folder.id)}. Долгое нажатие: действия с папкой.',
                           child: ListTile(
@@ -1148,47 +1159,52 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                             onTap: () => setState(() => _folderId = folder.id),
                             onLongPress: () => _showFolderActions(folder),
                           ),
-                        ),
-                        const Divider(height: 1),
-                      ],
-                      if (childFolders.isNotEmpty && visible.isNotEmpty)
-                        const Padding(
+                        );
+                      }
+                      final hasHeading =
+                          childFolders.isNotEmpty && visible.isNotEmpty;
+                      if (hasHeading && index == folderRows) {
+                        return const Padding(
                           padding: EdgeInsets.fromLTRB(16, 16, 16, 6),
                           child: Text('Записи'),
-                        ),
-                      for (final entry in visible) ...[
-                        Dismissible(
-                          key: ValueKey(entry.id),
-                          direction: DismissDirection.endToStart,
-                          background: const ColoredBox(
-                            color: Colors.red,
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: Padding(
-                                padding: EdgeInsets.only(right: 20),
-                                child: Icon(
-                                  Icons.delete_outline,
-                                  color: Colors.white,
-                                ),
+                        );
+                      }
+                      final entryIndex =
+                          (index - folderRows - (hasHeading ? 1 : 0)) ~/ 2;
+                      if ((index - folderRows - (hasHeading ? 1 : 0)).isOdd) {
+                        return const Divider(height: 1);
+                      }
+                      final entry = visible[entryIndex];
+                      return Dismissible(
+                        key: ValueKey(entry.id),
+                        direction: DismissDirection.endToStart,
+                        background: const ColoredBox(
+                          color: Colors.red,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Padding(
+                              padding: EdgeInsets.only(right: 20),
+                              child: Icon(
+                                Icons.delete_outline,
+                                color: Colors.white,
                               ),
                             ),
                           ),
-                          confirmDismiss: (_) async => true,
-                          onDismissed: (_) => _delete(entry),
-                          child: _EntryTile(
-                            entry: entry,
-                            folderPath: searching
-                                ? _folderPathText(entry.folderId)
-                                : null,
-                            onEdit: () => _edit(entry),
-                            onDelete: () => _delete(entry),
-                            onHistory: () => _showPasswordHistory(entry),
-                            onOpenWebsite: () => _openWebsite(entry.website),
-                          ),
                         ),
-                        const Divider(height: 1),
-                      ],
-                    ],
+                        confirmDismiss: (_) async => true,
+                        onDismissed: (_) => _delete(entry),
+                        child: _EntryTile(
+                          entry: entry,
+                          folderPath: searching
+                              ? _folderPathText(entry.folderId)
+                              : null,
+                          onEdit: () => _edit(entry),
+                          onDelete: () => _delete(entry),
+                          onHistory: () => _showPasswordHistory(entry),
+                          onOpenWebsite: () => _openWebsite(entry.website),
+                        ),
+                      );
+                    },
                   ),
           ),
         ],
