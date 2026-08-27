@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:keykeep_passwords/data/vault_repository.dart';
 import 'package:keykeep_passwords/ui/vault_app.dart';
 
@@ -8,10 +9,35 @@ Future<void> main() async {
   runApp(KeyKeepApp(repository: VaultRepository()));
 }
 
-class KeyKeepApp extends StatelessWidget {
+class KeyKeepApp extends StatefulWidget {
   const KeyKeepApp({super.key, required this.repository});
 
   final VaultRepository repository;
+
+  @override
+  State<KeyKeepApp> createState() => _KeyKeepAppState();
+}
+
+class _KeyKeepAppState extends State<KeyKeepApp> {
+  static const _invertedColorsKey = 'ui_inverted_colors';
+  final _storage = const FlutterSecureStorage();
+  var _invertedColors = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppearance();
+  }
+
+  Future<void> _loadAppearance() async {
+    final value = await _storage.read(key: _invertedColorsKey);
+    if (mounted) setState(() => _invertedColors = value == 'true');
+  }
+
+  Future<void> _setInvertedColors(bool enabled) async {
+    await _storage.write(key: _invertedColorsKey, value: enabled.toString());
+    if (mounted) setState(() => _invertedColors = enabled);
+  }
 
   static const _accent = Color(0xFF2D6CDF);
 
@@ -24,8 +50,12 @@ class KeyKeepApp extends StatelessWidget {
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
     theme: _theme(Brightness.light),
     darkTheme: _theme(Brightness.dark),
-    themeMode: ThemeMode.system,
-    home: VaultApp(repository: repository),
+    themeMode: _invertedColors ? ThemeMode.dark : ThemeMode.light,
+    home: VaultApp(
+      repository: widget.repository,
+      invertedColors: _invertedColors,
+      onSetInvertedColors: _setInvertedColors,
+    ),
   );
 
   ThemeData _theme(Brightness brightness) {

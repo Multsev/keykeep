@@ -20,9 +20,16 @@ import 'package:keykeep_passwords/ui/vault_settings.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class VaultApp extends StatefulWidget {
-  const VaultApp({super.key, required this.repository});
+  const VaultApp({
+    super.key,
+    required this.repository,
+    required this.invertedColors,
+    required this.onSetInvertedColors,
+  });
 
   final VaultRepository repository;
+  final bool invertedColors;
+  final Future<void> Function(bool enabled) onSetInvertedColors;
 
   @override
   State<VaultApp> createState() => _VaultAppState();
@@ -221,6 +228,8 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         onExportVault: _exportKdbx,
         onDeleteVault: _deleteVault,
         onChangeMasterPin: _changeMasterPin,
+        invertedColors: widget.invertedColors,
+        onSetInvertedColors: widget.onSetInvertedColors,
         mcpController: _mcp,
         yandexOAuth: _yandex,
         yandexSync: _sync,

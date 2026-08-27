@@ -17,6 +17,8 @@ class VaultSettings extends StatefulWidget {
     required this.onExportVault,
     required this.onDeleteVault,
     required this.onChangeMasterPin,
+    required this.invertedColors,
+    required this.onSetInvertedColors,
     required this.mcpController,
     required this.yandexOAuth,
     required this.yandexSync,
@@ -33,6 +35,8 @@ class VaultSettings extends StatefulWidget {
   final Future<void> Function() onExportVault;
   final Future<void> Function() onDeleteVault;
   final Future<void> Function() onChangeMasterPin;
+  final bool invertedColors;
+  final Future<void> Function(bool enabled) onSetInvertedColors;
   final PasswordMcpController mcpController;
   final YandexDiskOAuthService yandexOAuth;
   final YandexVaultSync yandexSync;
@@ -46,6 +50,7 @@ class VaultSettings extends StatefulWidget {
 class _VaultSettingsState extends State<VaultSettings> {
   late var _biometricEnabled = widget.biometricEnabled;
   late var _autoPrompt = widget.biometricAutoPrompt;
+  late var _invertedColors = widget.invertedColors;
 
   Future<void> _toggleBiometrics(bool enabled) async {
     if (!enabled) {
@@ -118,6 +123,19 @@ class _VaultSettingsState extends State<VaultSettings> {
           ),
           trailing: const Icon(Icons.chevron_right),
           onTap: widget.onChangeMasterPin,
+        ),
+        const _SectionTitle('Оформление'),
+        SwitchListTile(
+          secondary: const Icon(Icons.invert_colors_outlined),
+          title: const Text('Инвертировать чёрный и белый'),
+          subtitle: const Text(
+            'Тёмная основа вместо светлой; акцентный цвет сохранится',
+          ),
+          value: _invertedColors,
+          onChanged: (enabled) async {
+            await widget.onSetInvertedColors(enabled);
+            if (mounted) setState(() => _invertedColors = enabled);
+          },
         ),
         const _SectionTitle('Интеграции'),
         ListTile(
