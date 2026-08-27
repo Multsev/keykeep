@@ -1075,6 +1075,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
             tooltip: 'Новая папка',
           ),
           PopupMenuButton<String>(
+            tooltip: 'Импорт и экспорт KeePass',
             onSelected: (value) {
               if (value == 'import') _importKdbx();
               if (value == 'export') _exportKdbx();
@@ -1136,13 +1137,17 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                 : ListView(
                     children: [
                       for (final folder in childFolders) ...[
-                        ListTile(
-                          leading: const Icon(Icons.folder_outlined),
-                          title: Text(folder.name),
-                          subtitle: Text(_folderContentsLabel(folder.id)),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => setState(() => _folderId = folder.id),
-                          onLongPress: () => _showFolderActions(folder),
+                        Semantics(
+                          label:
+                              '${folder.name}, ${_folderContentsLabel(folder.id)}. Долгое нажатие: действия с папкой.',
+                          child: ListTile(
+                            leading: const Icon(Icons.folder_outlined),
+                            title: Text(folder.name),
+                            subtitle: Text(_folderContentsLabel(folder.id)),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () => setState(() => _folderId = folder.id),
+                            onLongPress: () => _showFolderActions(folder),
+                          ),
                         ),
                         const Divider(height: 1),
                       ],
@@ -1628,6 +1633,7 @@ class _EntryTileState extends State<_EntryTile> {
       spacing: -8,
       children: [
         IconButton(
+          tooltip: _revealed ? 'Скрыть пароль' : 'Показать пароль',
           onPressed: () => setState(() => _revealed = !_revealed),
           icon: Icon(
             _revealed
@@ -1636,10 +1642,12 @@ class _EntryTileState extends State<_EntryTile> {
           ),
         ),
         IconButton(
+          tooltip: 'Копировать пароль',
           onPressed: _copyPassword,
           icon: const Icon(Icons.copy_outlined),
         ),
         PopupMenuButton<String>(
+          tooltip: 'Действия с записью',
           onSelected: (value) {
             if (value == 'delete') widget.onDelete();
             if (value == 'history') widget.onHistory();
