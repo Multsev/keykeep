@@ -16,6 +16,7 @@ class VaultSettings extends StatefulWidget {
     required this.onImportVault,
     required this.onExportVault,
     required this.onDeleteVault,
+    required this.onChangeMasterPin,
     required this.mcpController,
     required this.yandexOAuth,
     required this.yandexSync,
@@ -31,6 +32,7 @@ class VaultSettings extends StatefulWidget {
   final Future<void> Function() onImportVault;
   final Future<void> Function() onExportVault;
   final Future<void> Function() onDeleteVault;
+  final Future<void> Function() onChangeMasterPin;
   final PasswordMcpController mcpController;
   final YandexDiskOAuthService yandexOAuth;
   final YandexVaultSync yandexSync;
@@ -108,6 +110,15 @@ class _VaultSettingsState extends State<VaultSettings> {
               if (mounted) setState(() => _autoPrompt = enabled);
             },
           ),
+        ListTile(
+          leading: const Icon(Icons.password_outlined),
+          title: const Text('Сменить мастер-PIN'),
+          subtitle: const Text(
+            'Потребуется текущий PIN; восстановление без него невозможно',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: widget.onChangeMasterPin,
+        ),
         const _SectionTitle('Интеграции'),
         ListTile(
           leading: const Icon(Icons.cloud_outlined),

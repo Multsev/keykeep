@@ -1,4 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+
+import 'dart:typed_data';
+
 import 'package:keykeep_passwords/domain/password_entry.dart';
 import 'package:keykeep_passwords/domain/vault_folder.dart';
 import 'package:keykeep_passwords/services/kdbx_vault_codec.dart';
@@ -75,6 +78,42 @@ void main() {
       expect(
         restored.entries.single.history.single.password,
         'previous-password',
+      );
+    },
+  );
+
+  test(
+    'requires the selected KeePass key file to open a protected vault',
+    () async {
+      final codec = KdbxVaultCodec();
+      final keyFile = Uint8List.fromList(
+        List<int>.generate(32, (index) => index),
+      );
+      final bytes = await codec.export(
+        password: 'vault-password',
+        keyFile: keyFile,
+        folders: const [VaultFolder(id: 'root', name: 'Все записи')],
+        entries: [
+          PasswordEntry(
+            id: 'entry-1',
+            title: 'Mail',
+            username: 'a',
+            password: 'b',
+            website: '',
+            note: '',
+            updatedAt: DateTime(2026),
+          ),
+        ],
+      );
+      final restored = await codec.import(
+        bytes,
+        'vault-password',
+        keyFile: keyFile,
+      );
+      expect(restored.entries.single.title, 'Mail');
+      await expectLater(
+        codec.import(bytes, 'vault-password'),
+        throwsA(isA<Object>()),
       );
     },
   );

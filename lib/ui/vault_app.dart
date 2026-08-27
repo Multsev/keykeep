@@ -207,6 +207,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         onImportVault: _importKdbx,
         onExportVault: _exportKdbx,
         onDeleteVault: _deleteVault,
+        onChangeMasterPin: _changeMasterPin,
         mcpController: _mcp,
         yandexOAuth: _yandex,
         yandexSync: _sync,
@@ -215,6 +216,75 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       ),
     ),
   );
+
+  Future<void> _changeMasterPin() async {
+    final current = TextEditingController();
+    final next = TextEditingController();
+    final repeated = TextEditingController();
+    final values = await showDialog<(String, String)>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Сменить мастер-PIN'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: current,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Текущий PIN'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: next,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Новый PIN (не менее 6 символов)',
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: repeated,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Повторите новый PIN',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, (current.text, next.text)),
+            child: const Text('Сменить'),
+          ),
+        ],
+      ),
+    );
+    final repeatedValue = repeated.text;
+    current.dispose();
+    next.dispose();
+    repeated.dispose();
+    if (values == null) return;
+    final (oldPin, newPin) = values;
+    if (newPin.length < 6 || newPin != repeatedValue) {
+      _showMessage(
+        'Новый PIN должен содержать не менее 6 символов и совпадать с повтором.',
+      );
+      return;
+    }
+    if (!await widget.repository.changeMasterPin(
+      currentPin: oldPin,
+      newPin: newPin,
+    )) {
+      _showMessage('Текущий PIN неверный.');
+      return;
+    }
+    setState(() => _vaultPassword = newPin);
+    _showMessage('Мастер-PIN изменён.');
+  }
 
   Future<void> _finishFirstVaultSetup(String pin) async {
     await widget.repository.createMasterPin(pin);
