@@ -78,12 +78,13 @@ else
 fi
 build_number="$code_date$(printf '%02d' "$((10#$sequence))")"
 version="$version_base.$(printf '%02d' "$sequence")"
+build_date="$(TZ=Europe/Moscow date '+%Y-%m-%d %H:%M %Z')"
 output="Release"
 tag="build/v$version"
 
 flutter analyze
 flutter test
-build_args=(--release --target-platform=android-arm64 --build-name="$version" --build-number="$build_number")
+build_args=(--release --target-platform=android-arm64 --build-name="$version" --build-number="$build_number" --dart-define="APP_RELEASE_VERSION=$version" --dart-define="APP_BUILD_DATE=$build_date")
 if [[ -n "${YANDEX_OAUTH_CLIENT_ID:-}" ]]; then
   build_args+=(--dart-define="YANDEX_OAUTH_CLIENT_ID=$YANDEX_OAUTH_CLIENT_ID")
 fi

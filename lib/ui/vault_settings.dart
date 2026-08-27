@@ -4,6 +4,7 @@ import 'package:keykeep_passwords/services/yandex_disk_oauth.dart';
 import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
 import 'package:keykeep_passwords/ui/mcp_settings.dart';
 import 'package:keykeep_passwords/ui/yandex_disk_settings.dart';
+import 'package:keykeep_passwords/ui/about_keykeep.dart';
 
 class VaultSettings extends StatefulWidget {
   const VaultSettings({
@@ -153,6 +154,14 @@ class _VaultSettingsState extends State<VaultSettings> {
           subtitle: Text(_accentName),
           trailing: const Icon(Icons.chevron_right),
           onTap: _chooseAccentColor,
+        ),
+        ListTile(
+          leading: const Icon(Icons.info_outline),
+          title: const Text('О приложении'),
+          subtitle: const Text('Версия и дата сборки'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context)
+              .push(MaterialPageRoute(builder: (_) => const AboutKeyKeep())),
         ),
         const _SectionTitle('Интеграции'),
         ListTile(
