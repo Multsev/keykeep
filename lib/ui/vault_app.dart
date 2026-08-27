@@ -211,10 +211,58 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
 
   Future<void> _finishFirstVaultSetup(String pin) async {
     await widget.repository.createMasterPin(pin);
+    await _completeFirstVaultSetup(pin);
+  }
+
+  /// Imports a KDBX before any local vault exists. The KeePass password only
+  /// opens the selected file; the new master PIN protects its local copy.
+  Future<void> _importFirstKdbx(String pin) async {
+    final picked = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: const ['kdbx'],
+    );
+    if (picked == null) return;
+    final password = await _askKdbxPassword('Открыть KeePass (.kdbx)');
+    if (password == null) return;
+    try {
+      final snapshot = await KdbxVaultCodec().import(
+        Uint8List.fromList(await picked.readAsBytes()),
+        password,
+      );
+      await widget.repository.createMasterPin(pin);
+      await widget.repository.saveFolders(snapshot.folders);
+      await widget.repository.saveEntries(snapshot.entries);
+      await _completeFirstVaultSetup(
+        pin,
+        folders: snapshot.folders,
+        entries: snapshot.entries,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть KDBX: проверьте пароль и файл.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _completeFirstVaultSetup(
+    String pin, {
+    List<VaultFolder>? folders,
+    List<PasswordEntry>? entries,
+  }) async {
     if (!mounted) return;
     // A newly created vault is already authenticated by the PIN confirmation.
-    setState(() => _hasMasterPin = true);
-    await _unlock(pin);
+    setState(() {
+      _hasMasterPin = true;
+      _folders = folders ?? _folders;
+      _entries = entries ?? _entries;
+      _folderId = 'root';
+      _unlocked = true;
+      _vaultPassword = pin;
+    });
     if (!mounted) return;
     final biometricAvailable = await _biometric.isAvailable();
     if (!mounted || !biometricAvailable) return;
@@ -574,7 +622,10 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (!hasPin) {
-      return _CreatePinScreen(onCreated: _finishFirstVaultSetup);
+      return _CreatePinScreen(
+        onCreated: _finishFirstVaultSetup,
+        onImport: _importFirstKdbx,
+      );
     }
     return _unlocked
         ? _vault(context)
@@ -892,8 +943,9 @@ class _UnlockScreenState extends State<_UnlockScreen> {
 }
 
 class _CreatePinScreen extends StatefulWidget {
-  const _CreatePinScreen({required this.onCreated});
+  const _CreatePinScreen({required this.onCreated, required this.onImport});
   final Future<void> Function(String) onCreated;
+  final Future<void> Function(String) onImport;
   @override
   State<_CreatePinScreen> createState() => _CreatePinScreenState();
 }
@@ -913,16 +965,29 @@ class _CreatePinScreenState extends State<_CreatePinScreen> {
 
   Future<void> _submit() async {
     final pin = _pin.text;
+    if (!_validatePin(pin)) return;
+    setState(() => _busy = true);
+    await widget.onCreated(pin);
+    if (mounted) setState(() => _busy = false);
+  }
+
+  bool _validatePin(String pin) {
     if (pin.length < 6 || pin != _confirmation.text) {
       setState(
         () => _error = pin.length < 6
             ? 'PIN должен содержать не менее 6 символов.'
             : 'PIN-коды не совпадают.',
       );
-      return;
+      return false;
     }
+    return true;
+  }
+
+  Future<void> _import() async {
+    final pin = _pin.text;
+    if (!_validatePin(pin)) return;
     setState(() => _busy = true);
-    await widget.onCreated(pin);
+    await widget.onImport(pin);
     if (mounted) setState(() => _busy = false);
   }
 
@@ -935,7 +1000,15 @@ class _CreatePinScreenState extends State<_CreatePinScreen> {
     action: _submit,
     busy: _busy,
     error: _error,
-    label: 'Создать хранилище',
+    label: 'Создать пустое хранилище',
+    secondaryAction: _import,
+    secondaryLabel: 'Импортировать KeePass (.kdbx)',
+    secondaryIcon: Icons.file_open_outlined,
+    footer: const Text(
+      'Для импорта также понадобится пароль выбранной KeePass-базы. '
+      'Новый мастер-PIN защитит её локальную копию.',
+      textAlign: TextAlign.center,
+    ),
   );
 }
 
@@ -951,6 +1024,8 @@ class _Gate extends StatelessWidget {
     required this.label,
     this.secondaryAction,
     this.secondaryLabel,
+    this.secondaryIcon,
+    this.footer,
   });
   final String title, subtitle, label;
   final TextEditingController controller;
@@ -960,6 +1035,8 @@ class _Gate extends StatelessWidget {
   final String? error;
   final Future<void> Function()? secondaryAction;
   final String? secondaryLabel;
+  final IconData? secondaryIcon;
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -1021,8 +1098,15 @@ class _Gate extends StatelessWidget {
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: busy ? null : secondaryAction,
-                    icon: const Icon(Icons.fingerprint),
+                    icon: Icon(secondaryIcon ?? Icons.fingerprint),
                     label: Text(secondaryLabel!),
+                  ),
+                ],
+                if (footer != null) ...[
+                  const SizedBox(height: 12),
+                  DefaultTextStyle.merge(
+                    style: Theme.of(context).textTheme.bodySmall,
+                    child: footer!,
                   ),
                 ],
               ],
