@@ -18,6 +18,8 @@ class VaultRepository {
   static const _biometricPinKey = 'biometric_unlock_pin';
   static const _biometricAutoPromptKey = 'biometric_auto_prompt';
   static const _vaultModifiedAtKey = 'vault_modified_at';
+  static const _failedUnlockCountKey = 'failed_unlock_count';
+  static const _unlockBlockedUntilKey = 'unlock_blocked_until';
   final FlutterSecureStorage _storage;
   final MasterPin _masterPin;
 
@@ -33,12 +35,58 @@ class VaultRepository {
     );
   }
 
+  /// The delay grows after repeated failures, without risking vault deletion.
+  Future<Duration> unlockDelay() async {
+    final source = await _storage.read(key: _unlockBlockedUntilKey);
+    if (source == null) return Duration.zero;
+    final blockedUntil = DateTime.tryParse(source);
+    if (blockedUntil == null || !blockedUntil.isAfter(DateTime.now())) {
+      await _storage.delete(key: _unlockBlockedUntilKey);
+      return Duration.zero;
+    }
+    return blockedUntil.difference(DateTime.now());
+  }
+
   Future<bool> unlock(String pin) async {
     final salt = await _storage.read(key: _saltKey);
     final verifier = await _storage.read(key: _verifierKey);
-    return salt != null &&
+    final matched =
+        salt != null &&
         verifier != null &&
         _masterPin.matches(pin, salt, verifier);
+    if (matched) {
+      await _storage.delete(key: _failedUnlockCountKey);
+      await _storage.delete(key: _unlockBlockedUntilKey);
+      return true;
+    }
+    final attempts =
+        (int.tryParse(await _storage.read(key: _failedUnlockCountKey) ?? '0') ??
+            0) +
+        1;
+    await _storage.write(key: _failedUnlockCountKey, value: '$attempts');
+    // 0, 0, 0, 5, 10, 20 … seconds, capped at five minutes.
+    if (attempts >= 4) {
+      final seconds = (5 * (1 << (attempts - 4))).clamp(5, 300);
+      await _storage.write(
+        key: _unlockBlockedUntilKey,
+        value: DateTime.now().add(Duration(seconds: seconds)).toIso8601String(),
+      );
+    }
+    return false;
+  }
+
+  Future<bool> changeMasterPin({
+    required String currentPin,
+    required String newPin,
+  }) async {
+    if (!await unlock(currentPin)) return false;
+    final salt = _masterPin.newSalt();
+    await _storage.write(key: _saltKey, value: salt);
+    await _storage.write(
+      key: _verifierKey,
+      value: _masterPin.derive(newPin, salt),
+    );
+    return true;
   }
 
   Future<bool> biometricUnlock() async {
@@ -78,6 +126,8 @@ class VaultRepository {
       _biometricPinKey,
       _biometricAutoPromptKey,
       _vaultModifiedAtKey,
+      _failedUnlockCountKey,
+      _unlockBlockedUntilKey,
     ]) {
       await _storage.delete(key: key);
     }

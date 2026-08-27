@@ -1,18 +1,35 @@
+import 'dart:convert';
+
 enum CustomFieldType { text, protected, oneTimePassword }
 
 class PasswordRevision {
-  const PasswordRevision({required this.password, required this.changedAt});
-  final String password;
+  PasswordRevision({
+    Map<String, Object?> values = const {},
+    String? password,
+    required this.changedAt,
+  }) : values = password == null ? values : {...values, 'password': password};
+
+  /// Immutable copy of every user-editable value at the time of a change.
+  /// This makes the history useful for more than just password rotation.
+  final Map<String, Object?> values;
   final DateTime changedAt;
+
+  /// Kept for callers of the first password-only revision format.
+  String get password => values['password'] as String? ?? '';
   Map<String, String> toJson() => {
-    'password': password,
+    'values': jsonEncode(values),
     'changedAt': changedAt.toIso8601String(),
   };
-  factory PasswordRevision.fromJson(Map<String, dynamic> json) =>
-      PasswordRevision(
-        password: json['password']! as String,
-        changedAt: DateTime.parse(json['changedAt']! as String),
-      );
+  factory PasswordRevision.fromJson(Map<String, dynamic> json) {
+    // Preserve compatibility with the early password-only history format.
+    final raw = json['values'];
+    return PasswordRevision(
+      values: raw is String
+          ? (jsonDecode(raw) as Map<String, dynamic>)
+          : <String, Object?>{'password': json['password'] as String? ?? ''},
+      changedAt: DateTime.parse(json['changedAt']! as String),
+    );
+  }
 }
 
 class CustomField {
@@ -71,28 +88,46 @@ class PasswordEntry {
     String? folderId,
     List<CustomField>? customFields,
     List<PasswordRevision>? history,
-  }) => PasswordEntry(
-    id: id,
-    title: title ?? this.title,
-    username: username ?? this.username,
-    password: password ?? this.password,
-    website: website ?? this.website,
-    note: note ?? this.note,
-    updatedAt: DateTime.now(),
-    folderId: folderId ?? this.folderId,
-    customFields: customFields ?? this.customFields,
-    history:
-        history ??
-        (password != null && password != this.password
-            ? [
-                ...this.history,
-                PasswordRevision(
-                  password: this.password,
-                  changedAt: DateTime.now(),
-                ),
-              ]
-            : this.history),
+  }) {
+    final changed =
+        title != null && title != this.title ||
+        username != null && username != this.username ||
+        password != null && password != this.password ||
+        website != null && website != this.website ||
+        note != null && note != this.note ||
+        folderId != null && folderId != this.folderId ||
+        customFields != null && !_sameFields(customFields, this.customFields);
+    return PasswordEntry(
+      id: id,
+      title: title ?? this.title,
+      username: username ?? this.username,
+      password: password ?? this.password,
+      website: website ?? this.website,
+      note: note ?? this.note,
+      updatedAt: DateTime.now(),
+      folderId: folderId ?? this.folderId,
+      customFields: customFields ?? this.customFields,
+      history:
+          history ?? (changed ? [...this.history, revision()] : this.history),
+    );
+  }
+
+  PasswordRevision revision() => PasswordRevision(
+    values: {
+      'title': title,
+      'username': username,
+      'password': password,
+      'website': website,
+      'note': note,
+      'folderId': folderId,
+      'customFields': customFields.map((field) => field.toJson()).toList(),
+    },
+    changedAt: DateTime.now(),
   );
+
+  static bool _sameFields(List<CustomField> a, List<CustomField> b) =>
+      jsonEncode(a.map((field) => field.toJson()).toList()) ==
+      jsonEncode(b.map((field) => field.toJson()).toList());
 
   Map<String, Object> toJson() => {
     'id': id,

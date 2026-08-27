@@ -17,6 +17,7 @@ import 'package:keykeep_passwords/services/yandex_vault_sync.dart';
 import 'package:keykeep_passwords/services/password_mcp_controller.dart';
 import 'package:keykeep_passwords/ui/password_editor.dart';
 import 'package:keykeep_passwords/ui/vault_settings.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class VaultApp extends StatefulWidget {
   const VaultApp({super.key, required this.repository});
@@ -90,6 +91,12 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   }
 
   Future<void> _unlock(String pin) async {
+    final delay = await widget.repository.unlockDelay();
+    if (delay > Duration.zero) {
+      throw StateError(
+        'Повторите через ${delay.inSeconds + 1} с. после нескольких неверных PIN.',
+      );
+    }
     if (!await widget.repository.unlock(pin)) {
       throw StateError('Неверный PIN');
     }
@@ -316,6 +323,20 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       () => _entries = _entries.where((item) => item.id != entry.id).toList(),
     );
     await widget.repository.saveEntries(_entries);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('«${entry.title}» удалена'),
+        action: SnackBarAction(
+          label: 'Отменить',
+          onPressed: () async {
+            setState(() => _entries = [..._entries, entry]);
+            await widget.repository.saveEntries(_entries);
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _completeYandexAuthorization(Uri callback) async {
@@ -526,6 +547,150 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     await widget.repository.saveFolders(_folders);
   }
 
+  Future<void> _showFolderActions(VaultFolder folder) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Переименовать'),
+              onTap: () => Navigator.pop(context, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.drive_file_move_outlined),
+              title: const Text('Переместить'),
+              onTap: () => Navigator.pop(context, 'move'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Удалить'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == 'rename') await _renameFolder(folder);
+    if (action == 'move') await _moveFolder(folder);
+    if (action == 'delete') await _deleteFolder(folder);
+  }
+
+  Future<void> _renameFolder(VaultFolder folder) async {
+    final controller = TextEditingController(text: folder.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Переименовать папку'),
+        content: TextField(controller: controller, autofocus: true),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    setState(
+      () => _folders = _folders
+          .map(
+            (item) => item.id == folder.id
+                ? VaultFolder(id: item.id, name: name, parentId: item.parentId)
+                : item,
+          )
+          .toList(),
+    );
+    await widget.repository.saveFolders(_folders);
+  }
+
+  Future<void> _moveFolder(VaultFolder folder) async {
+    final descendants = _descendantIds(folder.id);
+    final candidates = _folders
+        .where((item) => item.id != folder.id && !descendants.contains(item.id))
+        .toList();
+    final target = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Переместить в папку'),
+        children: candidates
+            .map(
+              (item) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, item.id),
+                child: Text(_folderLabel(item)),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (target == null || target == folder.parentId) return;
+    setState(
+      () => _folders = _folders
+          .map(
+            (item) => item.id == folder.id
+                ? VaultFolder(id: item.id, name: item.name, parentId: target)
+                : item,
+          )
+          .toList(),
+    );
+    await widget.repository.saveFolders(_folders);
+  }
+
+  Future<void> _deleteFolder(VaultFolder folder) async {
+    final ids = _descendantIds(folder.id)..add(folder.id);
+    final count = _entries
+        .where((entry) => ids.contains(entry.folderId))
+        .length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Удалить папку?'),
+        content: Text('Будут удалены папка, вложенные папки и $count записей.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() {
+      _folders = _folders.where((item) => !ids.contains(item.id)).toList();
+      _entries = _entries
+          .where((entry) => !ids.contains(entry.folderId))
+          .toList();
+      if (ids.contains(_folderId)) _folderId = 'root';
+    });
+    await widget.repository.saveFolders(_folders);
+    await widget.repository.saveEntries(_entries);
+  }
+
+  Set<String> _descendantIds(String parentId) {
+    final result = <String>{};
+    var frontier = <String>{parentId};
+    while (frontier.isNotEmpty) {
+      final children = _folders
+          .where((folder) => frontier.contains(folder.parentId))
+          .map((folder) => folder.id)
+          .toSet();
+      result.addAll(children);
+      frontier = children;
+    }
+    return result;
+  }
+
   Future<String?> _askKdbxPassword(String title) async {
     final controller = TextEditingController();
     final password = await showDialog<String>(
@@ -640,8 +805,15 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     final searching = _query.trim().isNotEmpty;
     final visible =
         _entries.where((entry) {
-          final searchable =
-              '${entry.title} ${entry.username} ${entry.website}';
+          final searchable = [
+            entry.title,
+            entry.username,
+            entry.website,
+            entry.note,
+            ...entry.customFields.map(
+              (field) => '${field.name} ${field.value}',
+            ),
+          ].join(' ');
           return (searching || entry.folderId == _folderId) &&
               searchable.toLowerCase().contains(_query.toLowerCase());
         }).toList()..sort(
@@ -741,6 +913,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                           subtitle: Text(_folderContentsLabel(folder.id)),
                           trailing: const Icon(Icons.chevron_right),
                           onTap: () => setState(() => _folderId = folder.id),
+                          onLongPress: () => _showFolderActions(folder),
                         ),
                         const Divider(height: 1),
                       ],
@@ -750,14 +923,34 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                           child: Text('Записи'),
                         ),
                       for (final entry in visible) ...[
-                        _EntryTile(
-                          entry: entry,
-                          folderPath: searching
-                              ? _folderPathText(entry.folderId)
-                              : null,
-                          onEdit: () => _edit(entry),
-                          onDelete: () => _delete(entry),
-                          onHistory: () => _showPasswordHistory(entry),
+                        Dismissible(
+                          key: ValueKey(entry.id),
+                          direction: DismissDirection.endToStart,
+                          background: const ColoredBox(
+                            color: Colors.red,
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: Padding(
+                                padding: EdgeInsets.only(right: 20),
+                                child: Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                          confirmDismiss: (_) async => true,
+                          onDismissed: (_) => _delete(entry),
+                          child: _EntryTile(
+                            entry: entry,
+                            folderPath: searching
+                                ? _folderPathText(entry.folderId)
+                                : null,
+                            onEdit: () => _edit(entry),
+                            onDelete: () => _delete(entry),
+                            onHistory: () => _showPasswordHistory(entry),
+                            onOpenWebsite: () => _openWebsite(entry.website),
+                          ),
                         ),
                         const Divider(height: 1),
                       ],
@@ -781,12 +974,17 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
                 children: entry.history.reversed
                     .map(
                       (revision) => ListTile(
-                        title: SelectableText(revision.password),
+                        title: Text(
+                          revision.values['title'] as String? ?? entry.title,
+                        ),
                         subtitle: Text(
-                          revision.changedAt.toLocal().toString().substring(
-                            0,
-                            16,
-                          ),
+                          '${revision.changedAt.toLocal().toString().substring(0, 16)} · '
+                          'логин: ${revision.values['username'] as String? ?? '—'}',
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Показать пароль из версии',
+                          icon: const Icon(Icons.visibility_outlined),
+                          onPressed: () => _showRevisionPassword(revision),
                         ),
                       ),
                     )
@@ -801,6 +999,35 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       ],
     ),
   );
+
+  Future<void> _openWebsite(String source) async {
+    if (source.trim().isEmpty) return;
+    final uri = Uri.tryParse(
+      source.contains('://') ? source : 'https://$source',
+    );
+    if (uri == null ||
+        !await launchUrl(uri, mode: LaunchMode.inAppBrowserView)) {
+      _showMessage('Не удалось открыть сайт.');
+    }
+  }
+
+  Future<void> _showRevisionPassword(PasswordRevision revision) async {
+    final password = revision.values['password'] as String? ?? '';
+    if (password.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Пароль из версии'),
+        content: SelectableText(password),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
 
   List<VaultFolder> _folderPath(String folderId) {
     final path = <VaultFolder>[];
@@ -1125,10 +1352,11 @@ class _EntryTile extends StatefulWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onHistory,
+    required this.onOpenWebsite,
   });
   final PasswordEntry entry;
   final String? folderPath;
-  final VoidCallback onEdit, onDelete;
+  final VoidCallback onEdit, onDelete, onOpenWebsite;
   final VoidCallback onHistory;
   @override
   State<_EntryTile> createState() => _EntryTileState();
@@ -1136,6 +1364,7 @@ class _EntryTile extends StatefulWidget {
 
 class _EntryTileState extends State<_EntryTile> {
   var _revealed = false;
+  Timer? _clipboardTimer;
   String? get _totp {
     final field = widget.entry.customFields.where(
       (item) => item.type == CustomFieldType.oneTimePassword,
@@ -1178,20 +1407,21 @@ class _EntryTileState extends State<_EntryTile> {
           ),
         ),
         IconButton(
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: widget.entry.password));
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('Пароль скопирован')));
-          },
+          onPressed: _copyPassword,
           icon: const Icon(Icons.copy_outlined),
         ),
         PopupMenuButton<String>(
           onSelected: (value) {
             if (value == 'delete') widget.onDelete();
             if (value == 'history') widget.onHistory();
+            if (value == 'website') widget.onOpenWebsite();
           },
           itemBuilder: (_) => [
+            if (widget.entry.website.trim().isNotEmpty)
+              const PopupMenuItem(
+                value: 'website',
+                child: Text('Открыть сайт'),
+              ),
             const PopupMenuItem(value: 'delete', child: Text('Удалить')),
             const PopupMenuItem(
               value: 'history',
@@ -1202,4 +1432,27 @@ class _EntryTileState extends State<_EntryTile> {
       ],
     ),
   );
+
+  Future<void> _copyPassword() async {
+    final password = widget.entry.password;
+    await Clipboard.setData(ClipboardData(text: password));
+    _clipboardTimer?.cancel();
+    _clipboardTimer = Timer(const Duration(seconds: 30), () async {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (data?.text == password) {
+        await Clipboard.setData(const ClipboardData(text: ''));
+      }
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Пароль скопирован на 30 секунд')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _clipboardTimer?.cancel();
+    super.dispose();
+  }
 }
