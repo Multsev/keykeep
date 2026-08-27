@@ -13,6 +13,8 @@ class KeyKeepApp extends StatelessWidget {
 
   final VaultRepository repository;
 
+  static const _accent = Color(0xFF2D6CDF);
+
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -20,22 +22,62 @@ class KeyKeepApp extends StatelessWidget {
     locale: const Locale('ru'),
     supportedLocales: const [Locale('ru')],
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    theme: ThemeData(
-      colorSchemeSeed: const Color(0xFF2457A6),
-      useMaterial3: true,
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-    ),
-    darkTheme: ThemeData(
-      colorSchemeSeed: const Color(0xFF9CC1FF),
-      brightness: Brightness.dark,
-      useMaterial3: true,
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-    ),
+    theme: _theme(Brightness.light),
+    darkTheme: _theme(Brightness.dark),
     themeMode: ThemeMode.system,
     home: VaultApp(repository: repository),
   );
+
+  ThemeData _theme(Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    final scheme = ColorScheme(
+      brightness: brightness,
+      primary: _accent,
+      onPrimary: Colors.white,
+      primaryContainer: dark
+          ? const Color(0xFF17233B)
+          : const Color(0xFFEAF0FF),
+      onPrimaryContainer: dark
+          ? const Color(0xFFDCE7FF)
+          : const Color(0xFF0D306D),
+      secondary: dark ? const Color(0xFFD7D7D7) : const Color(0xFF3E3E3E),
+      onSecondary: dark ? Colors.black : Colors.white,
+      error: const Color(0xFFB3261E),
+      onError: Colors.white,
+      surface: dark ? const Color(0xFF121212) : Colors.white,
+      onSurface: dark ? const Color(0xFFE8E8E8) : const Color(0xFF171717),
+      outline: dark ? const Color(0xFF777777) : const Color(0xFFB5B5B5),
+    );
+    return ThemeData(
+      colorScheme: scheme,
+      useMaterial3: true,
+      scaffoldBackgroundColor: scheme.surface,
+      appBarTheme: AppBarTheme(
+        backgroundColor: scheme.surface,
+        foregroundColor: scheme.onSurface,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
+      cardTheme: CardThemeData(
+        color: dark ? const Color(0xFF1A1A1A) : const Color(0xFFF7F7F7),
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: scheme.outline.withValues(alpha: 0.35)),
+        ),
+      ),
+      dividerTheme: DividerThemeData(
+        color: scheme.outline.withValues(alpha: 0.28),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        border: const OutlineInputBorder(),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: scheme.outline),
+        ),
+        focusedBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: _accent, width: 2),
+        ),
+      ),
+    );
+  }
 }
