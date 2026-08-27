@@ -19,6 +19,9 @@ class VaultSettings extends StatefulWidget {
     required this.onChangeMasterPin,
     required this.invertedColors,
     required this.onSetInvertedColors,
+    required this.accentName,
+    required this.accentColors,
+    required this.onSetAccentColor,
     required this.mcpController,
     required this.yandexOAuth,
     required this.yandexSync,
@@ -37,6 +40,9 @@ class VaultSettings extends StatefulWidget {
   final Future<void> Function() onChangeMasterPin;
   final bool invertedColors;
   final Future<void> Function(bool enabled) onSetInvertedColors;
+  final String accentName;
+  final Map<String, Color> accentColors;
+  final Future<void> Function(String name) onSetAccentColor;
   final PasswordMcpController mcpController;
   final YandexDiskOAuthService yandexOAuth;
   final YandexVaultSync yandexSync;
@@ -51,6 +57,7 @@ class _VaultSettingsState extends State<VaultSettings> {
   late var _biometricEnabled = widget.biometricEnabled;
   late var _autoPrompt = widget.biometricAutoPrompt;
   late var _invertedColors = widget.invertedColors;
+  late var _accentName = widget.accentName;
 
   Future<void> _toggleBiometrics(bool enabled) async {
     if (!enabled) {
@@ -137,6 +144,16 @@ class _VaultSettingsState extends State<VaultSettings> {
             if (mounted) setState(() => _invertedColors = enabled);
           },
         ),
+        ListTile(
+          leading: Icon(
+            Icons.palette_outlined,
+            color: widget.accentColors[_accentName],
+          ),
+          title: const Text('Акцентный цвет'),
+          subtitle: Text(_accentName),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _chooseAccentColor,
+        ),
         const _SectionTitle('Интеграции'),
         ListTile(
           leading: const Icon(Icons.cloud_outlined),
@@ -194,6 +211,43 @@ class _VaultSettingsState extends State<VaultSettings> {
       ],
     ),
   );
+
+  Future<void> _chooseAccentColor() async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Акцентный цвет'),
+        children: widget.accentColors.entries
+            .map(
+              (item) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, item.key),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: item.value,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(item.key),
+                    if (item.key == _accentName) ...[
+                      const Spacer(),
+                      const Icon(Icons.check),
+                    ],
+                  ],
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (selected == null) return;
+    await widget.onSetAccentColor(selected);
+    if (mounted) setState(() => _accentName = selected);
+  }
 }
 
 class _SectionTitle extends StatelessWidget {

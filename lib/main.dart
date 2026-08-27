@@ -20,8 +20,10 @@ class KeyKeepApp extends StatefulWidget {
 
 class _KeyKeepAppState extends State<KeyKeepApp> {
   static const _invertedColorsKey = 'ui_inverted_colors';
+  static const _accentColorKey = 'ui_accent_color';
   final _storage = const FlutterSecureStorage();
   var _invertedColors = false;
+  var _accentName = 'Синий';
 
   @override
   void initState() {
@@ -31,7 +33,13 @@ class _KeyKeepAppState extends State<KeyKeepApp> {
 
   Future<void> _loadAppearance() async {
     final value = await _storage.read(key: _invertedColorsKey);
-    if (mounted) setState(() => _invertedColors = value == 'true');
+    final accent = await _storage.read(key: _accentColorKey);
+    if (mounted) {
+      setState(() {
+        _invertedColors = value == 'true';
+        _accentName = _accentColors.containsKey(accent) ? accent! : 'Синий';
+      });
+    }
   }
 
   Future<void> _setInvertedColors(bool enabled) async {
@@ -39,7 +47,18 @@ class _KeyKeepAppState extends State<KeyKeepApp> {
     if (mounted) setState(() => _invertedColors = enabled);
   }
 
-  static const _accent = Color(0xFF2D6CDF);
+  Future<void> _setAccentColor(String name) async {
+    if (!_accentColors.containsKey(name)) return;
+    await _storage.write(key: _accentColorKey, value: name);
+    if (mounted) setState(() => _accentName = name);
+  }
+
+  static const _accentColors = <String, Color>{
+    'Синий': Color(0xFF2D6CDF),
+    'Зелёный': Color(0xFF23865A),
+    'Фиолетовый': Color(0xFF7357C8),
+    'Оранжевый': Color(0xFFBF6517),
+  };
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -55,14 +74,18 @@ class _KeyKeepAppState extends State<KeyKeepApp> {
       repository: widget.repository,
       invertedColors: _invertedColors,
       onSetInvertedColors: _setInvertedColors,
+      accentName: _accentName,
+      accentColors: _accentColors,
+      onSetAccentColor: _setAccentColor,
     ),
   );
 
   ThemeData _theme(Brightness brightness) {
+    final accent = _accentColors[_accentName]!;
     final dark = brightness == Brightness.dark;
     final scheme = ColorScheme(
       brightness: brightness,
-      primary: _accent,
+      primary: accent,
       onPrimary: Colors.white,
       primaryContainer: dark
           ? const Color(0xFF17233B)
@@ -104,8 +127,8 @@ class _KeyKeepAppState extends State<KeyKeepApp> {
         enabledBorder: OutlineInputBorder(
           borderSide: BorderSide(color: scheme.outline),
         ),
-        focusedBorder: const OutlineInputBorder(
-          borderSide: BorderSide(color: _accent, width: 2),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: accent, width: 2),
         ),
       ),
     );

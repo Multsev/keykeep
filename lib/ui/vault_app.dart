@@ -25,11 +25,17 @@ class VaultApp extends StatefulWidget {
     required this.repository,
     required this.invertedColors,
     required this.onSetInvertedColors,
+    required this.accentName,
+    required this.accentColors,
+    required this.onSetAccentColor,
   });
 
   final VaultRepository repository;
   final bool invertedColors;
   final Future<void> Function(bool enabled) onSetInvertedColors;
+  final String accentName;
+  final Map<String, Color> accentColors;
+  final Future<void> Function(String name) onSetAccentColor;
 
   @override
   State<VaultApp> createState() => _VaultAppState();
@@ -230,6 +236,9 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         onChangeMasterPin: _changeMasterPin,
         invertedColors: widget.invertedColors,
         onSetInvertedColors: widget.onSetInvertedColors,
+        accentName: widget.accentName,
+        accentColors: widget.accentColors,
+        onSetAccentColor: widget.onSetAccentColor,
         mcpController: _mcp,
         yandexOAuth: _yandex,
         yandexSync: _sync,
