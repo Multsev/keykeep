@@ -231,10 +231,12 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     if (picked == null) return;
     final password = await _askKdbxPassword('Открыть KeePass (.kdbx)');
     if (password == null) return;
+    final keyFile = await _pickOptionalKeyFile();
     try {
       final snapshot = await KdbxVaultCodec().import(
         Uint8List.fromList(await picked.readAsBytes()),
         password,
+        keyFile: keyFile,
       );
       await widget.repository.createMasterPin(pin);
       await widget.repository.saveFolders(snapshot.folders);
@@ -719,6 +721,33 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     return password?.isEmpty ?? true ? null : password;
   }
 
+  /// Key files are deliberately selected per import and never retained by the
+  /// app, so a copied local vault does not silently weaken KeePass protection.
+  Future<Uint8List?> _pickOptionalKeyFile() async {
+    final useKey = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ключевой файл KeePass'),
+        content: const Text('Эта база дополнительно защищена ключевым файлом?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Нет'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Выбрать файл'),
+          ),
+        ],
+      ),
+    );
+    if (useKey != true) return null;
+    final picked = await FilePicker.pickFile();
+    return picked == null
+        ? null
+        : Uint8List.fromList(await picked.readAsBytes());
+  }
+
   Future<void> _exportKdbx() async {
     final password = await _askKdbxPassword('Экспорт KeePass (.kdbx)');
     if (password == null) return;
@@ -745,6 +774,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
   }
 
   Future<void> _importKdbx() async {
+    if (_entries.isNotEmpty && !await _confirmImportReplacement()) return;
     final picked = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['kdbx'],
@@ -752,10 +782,12 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     if (picked == null) return;
     final password = await _askKdbxPassword('Открыть KeePass (.kdbx)');
     if (password == null) return;
+    final keyFile = await _pickOptionalKeyFile();
     try {
       final snapshot = await KdbxVaultCodec().import(
         Uint8List.fromList(await picked.readAsBytes()),
         password,
+        keyFile: keyFile,
       );
       setState(() {
         _folders = snapshot.folders;
@@ -778,6 +810,35 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         );
       }
     }
+  }
+
+  Future<bool> _confirmImportReplacement() async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded),
+        title: const Text('Заменить локальное хранилище?'),
+        content: const Text(
+          'Импорт заменит текущие папки и записи. Перед продолжением можно экспортировать резервную KeePass-базу.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'backup'),
+            child: const Text('Экспортировать и продолжить'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(context, 'replace'),
+            child: const Text('Заменить'),
+          ),
+        ],
+      ),
+    );
+    if (action == 'backup') await _exportKdbx();
+    return action == 'backup' || action == 'replace';
   }
 
   @override

@@ -17,9 +17,10 @@ class KdbxVaultCodec {
     required List<VaultFolder> folders,
     required List<PasswordEntry> entries,
     required String password,
+    Uint8List? keyFile,
   }) async {
     final file = KdbxFormat().create(
-      Credentials(ProtectedValue.fromString(password)),
+      Credentials.composite(ProtectedValue.fromString(password), keyFile),
       'KeyKeep',
       generator: 'KeyKeep',
     );
@@ -75,10 +76,14 @@ class KdbxVaultCodec {
     return file.save();
   }
 
-  Future<VaultSnapshot> import(Uint8List source, String password) async {
+  Future<VaultSnapshot> import(
+    Uint8List source,
+    String password, {
+    Uint8List? keyFile,
+  }) async {
     final file = await KdbxFormat().read(
       source,
-      Credentials(ProtectedValue.fromString(password)),
+      Credentials.composite(ProtectedValue.fromString(password), keyFile),
     );
     final folders = <VaultFolder>[
       const VaultFolder(id: 'root', name: 'Все записи'),
