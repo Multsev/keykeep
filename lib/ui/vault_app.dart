@@ -70,7 +70,12 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive && mounted) {
+    // Android reports `inactive` while a biometric/system dialog is on top.
+    // Lock only after the app really leaves the foreground; otherwise a newly
+    // created vault is immediately locked by its optional biometric prompt.
+    if ((state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached) &&
+        mounted) {
       setState(() => _unlocked = false);
       _vaultPassword = null;
       unawaited(_mcp.stop());
