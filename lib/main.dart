@@ -122,6 +122,28 @@ class _KeyKeepAppState extends State<KeyKeepApp> {
       dividerTheme: DividerThemeData(
         color: scheme.outline.withValues(alpha: 0.28),
       ),
+      // Material 3 defaults the extended FAB to a neutral container. KeyKeep
+      // uses it for the primary "new entry" action, so it follows the accent.
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: accent,
+        foregroundColor: Colors.white,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: accent,
+          foregroundColor: Colors.white,
+        ),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? accent : null,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? accent.withValues(alpha: 0.35)
+              : null,
+        ),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         border: const OutlineInputBorder(),
         enabledBorder: OutlineInputBorder(
