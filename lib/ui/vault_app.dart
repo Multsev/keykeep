@@ -75,6 +75,14 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
       _vaultPassword = null;
       unawaited(_mcp.stop());
     }
+    if (state == AppLifecycleState.resumed && _unlocked) {
+      unawaited(_retryPendingCloudSync());
+    }
+  }
+
+  Future<void> _retryPendingCloudSync() async {
+    if (!await widget.repository.hasPendingCloudSync() || !_unlocked) return;
+    await _syncUpload(silent: true);
   }
 
   Future<void> _load() async {
@@ -425,7 +433,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _syncUpload() async {
+  Future<void> _syncUpload({bool silent = false}) async {
     final password = _vaultPassword;
     if (password == null) return;
     try {
@@ -448,6 +456,7 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
         password: password,
       );
       await widget.repository.markCloudSynced();
+      await widget.repository.clearPendingCloudSync();
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -457,9 +466,12 @@ class _VaultAppState extends State<VaultApp> with WidgetsBindingObserver {
           ),
         );
     } catch (error) {
+      await widget.repository.markCloudSyncPending();
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        if (!silent) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
     }
   }
 

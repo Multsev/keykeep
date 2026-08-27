@@ -21,6 +21,7 @@ class VaultRepository {
   static const _failedUnlockCountKey = 'failed_unlock_count';
   static const _unlockBlockedUntilKey = 'unlock_blocked_until';
   static const _lastCloudSyncKey = 'last_cloud_sync_at';
+  static const _pendingCloudSyncKey = 'pending_cloud_sync';
   final FlutterSecureStorage _storage;
   final MasterPin _masterPin;
 
@@ -130,6 +131,7 @@ class VaultRepository {
       _failedUnlockCountKey,
       _unlockBlockedUntilKey,
       _lastCloudSyncKey,
+      _pendingCloudSyncKey,
     ]) {
       await _storage.delete(key: key);
     }
@@ -190,6 +192,15 @@ class VaultRepository {
     key: _lastCloudSyncKey,
     value: DateTime.now().toUtc().toIso8601String(),
   );
+
+  Future<bool> hasPendingCloudSync() async =>
+      await _storage.read(key: _pendingCloudSyncKey) == 'true';
+
+  Future<void> markCloudSyncPending() =>
+      _storage.write(key: _pendingCloudSyncKey, value: 'true');
+
+  Future<void> clearPendingCloudSync() =>
+      _storage.delete(key: _pendingCloudSyncKey);
 
   Future<void> _touchVault() => _storage.write(
     key: _vaultModifiedAtKey,
