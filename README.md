@@ -65,15 +65,15 @@ flutter run --dart-define=YANDEX_OAUTH_CLIENT_ID=ваш_client_id
 
 ## Сборка релиза для сопровождающего
 
-Локальный pipeline создаёт APK в неотслеживаемой папке `Release/` и, если задан токен сопровождающего, копирует тот же APK в папку приложения на Яндекс Диске. Он сохраняет только четыре последних успешных APK. Формат версии: `0.DDMMYY.NN`.
+Release-pipeline проверяет код, отправляет `main` в GitHub, собирает APK в GitHub Actions, публикует его в [GitHub Releases](https://github.com/Multsev/keykeep/releases) и скачивает тот же файл в неотслеживаемую папку `Release/`. Локально и в GitHub остаются только четыре последних успешных APK. Формат версии: `0.DDMMYY.NN`.
 
-Скопируйте `.env.example` в `.env` и заполните только нужные параметры. Полное описание переменных, подписи production-сборки и процесса выпуска — в [docs/RELEASING.md](docs/RELEASING.md).
+Для OAuth-синхронизации пользователей с Яндекс Диском в GitHub Actions Variable `YANDEX_OAUTH_CLIENT_ID` хранится публичный Client ID. Токен владельца Яндекс Диска для выпуска APK больше не нужен. Полная инструкция по настройке — в [docs/RELEASING.md](docs/RELEASING.md).
 
 ```bash
 ./scripts/release.sh
 ```
 
-Текущий pipeline использует debug-подпись только для личного тестирования. Перед публичной раздачей APK нужно настроить отдельный production-ключ, хранимый вне Git.
+Текущий pipeline использует debug-подпись только для личного тестирования. Перед публичной раздачей APK нужно настроить отдельный production-ключ, хранимый в GitHub Secrets.
 
 ## Структура проекта
 

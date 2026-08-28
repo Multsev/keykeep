@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: keykeep-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7 # v6.0.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.47.1
+          channel: stable
+          cache: true
+      - name: Select release version
+        id: version
+        shell: bash
+        run: |
+          release_date="$(TZ=Europe/Moscow date '+%d%m%y')"
+          last_sequence="$(git tag --list "build/v0.$release_date.*" |
+            sed -nE "s/^build\\/v0\\.$release_date\\.([0-9]+)$/\\1/p" |
+            sort -n | tail -n 1)"
+          sequence=$(( ${last_sequence:-0} + 1 ))
+          printf -v sequence '%02d' "$sequence"
+          release="0.$release_date.$sequence"
+          build_number="$(TZ=Europe/Moscow date '+%y%m%d')$sequence"
+          build_date="$(TZ=Europe/Moscow date '+%Y-%m-%d %H:%M %Z')"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "tag=build/v$release" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+          echo "build_date=$build_date" >> "$GITHUB_OUTPUT"
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+      - name: Build APK
+        run: |
+          flutter build apk \
+            --release \
+            --target-platform=android-arm64 \
+            --build-name="${{ steps.version.outputs.release }}" \
+            --build-number="${{ steps.version.outputs.build_number }}" \
+            --dart-define="APP_RELEASE_VERSION=${{ steps.version.outputs.release }}" \
+            --dart-define="APP_BUILD_DATE=${{ steps.version.outputs.build_date }}" \
+            --dart-define="YANDEX_OAUTH_CLIENT_ID=${{ vars.YANDEX_OAUTH_CLIENT_ID }}"
+      - name: Verify and package APK
+        env:
+          RELEASE: ${{ steps.version.outputs.release }}
+        run: |
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner |
+            sort -V | tail -n 1)"
+          test -x "$apksigner"
+          "$apksigner" verify --verbose build/app/outputs/flutter-apk/app-release.apk
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/KeyKeep-v$RELEASE.apk"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASE: ${{ steps.version.outputs.release }}
+        run: |
+          gh release create "$TAG" \
+            "dist/KeyKeep-v$RELEASE.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "KeyKeep $RELEASE" \
+            --generate-notes \
+            --prerelease
+      - name: Keep four published APK releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list \
+            --repo "$GITHUB_REPOSITORY" \
+            --limit 100 \
+            --json tagName,isDraft,publishedAt |
+            jq -r '[.[] |
+              select(.isDraft == false and (.tagName | test("^build/v0\\\\.")))] |
+              sort_by(.publishedAt) | reverse | .[4:][] | .tagName' |
+            while IFS= read -r obsolete; do
+              [[ -z "$obsolete" ]] && continue
+              gh release delete "$obsolete" \
+                --repo "$GITHUB_REPOSITORY" \
+                --yes
+              echo "Removed obsolete GitHub Release: $obsolete"
+            done
