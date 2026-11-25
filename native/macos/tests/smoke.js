@@ -49,6 +49,18 @@ for(const [value,weak] of [['',false],['7',true],['12345',true],['123456',false]
 el('pin').value=el('repeat').value='7';
 el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'create');
+{
+  const pane=el('folders'), scroll=pane.querySelector('.folder-scroll'), button=el('showDeleted');
+  const filler=document.createElement('div');
+  filler.style.height='200vh';scroll.append(filler);
+  const start=button.getBoundingClientRect();
+  scroll.scrollTop=scroll.scrollHeight;
+  if(scroll.scrollTop===0 || Math.abs(button.getBoundingClientRect().top-start.top)>1 ||
+     Math.abs(start.bottom-pane.getBoundingClientRect().bottom)>1 || Math.abs(start.width-pane.clientWidth)>1 ||
+     !button.querySelector('svg'))throw Error('trash footer geometry');
+  filler.remove();
+  button.click();await until(()=>el('deletedItems').open,'open pinned trash');el('closeDeleted').click();
+}
 if(benchCount>0){
   await call('mcpCreationMode',{enabled:true});
   const command=await call('mcpConnection');

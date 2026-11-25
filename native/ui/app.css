@@ -171,3 +171,15 @@ dialog{max-height:85dvh}
 .card-icon svg{width:1.15rem;height:1.15rem;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
 #optionalActions:has(>button:not([hidden])){display:flex}
 #optionalActions:not(:has(>button:not([hidden]))){display:none}
+
+/* The folder tree scrolls between its heading and the full-width trash button. */
+#folders{min-height:0;padding:0;overflow:hidden;flex-direction:column}
+#folders>h2{margin:0;padding:.7rem .7rem .45rem}
+.folder-scroll{flex:1;min-height:0;overflow:auto;padding:0 .7rem .5rem}
+#showDeleted{flex:none;width:100%;display:flex;align-items:center;gap:.5rem;padding:.45rem .7rem;border:0;border-top:1px solid var(--line);border-radius:0;text-align:start}
+#showDeleted:focus-visible{outline-offset:-3px}
+@media(min-width:661px){#folders{display:flex}.panes{grid-template-rows:minmax(0,1fr)}}
+@media(max-width:660px){
+ body[data-screen=folders] #folders{display:flex;height:100%}
+ body[data-screen=folders]:not(.mac-vaults) #vault{height:100vh;height:100dvh;min-height:0}
+}
