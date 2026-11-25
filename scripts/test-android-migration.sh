@@ -13,17 +13,28 @@ javac -encoding UTF-8 --release 8 -cp "$sdk/platforms/android-35/android.jar" -d
 jar cf "$stage/classes.jar" -C "$stage/classes" .
 "$bt/d8" --min-api 28 --lib "$sdk/platforms/android-35/android.jar" --output "$stage" "$stage/classes.jar"
 "$bt/aapt2" link -I "$sdk/platforms/android-35/android.jar" --min-sdk-version 28 --target-sdk-version 35 --manifest native/android/tests/AndroidManifest.xml -o "$stage/probe.apk"
+if [[ ${2:-} == --first-import ]]; then
+    mkdir -p "$stage/assets"
+    xc=${KEEPASSXC_CLI:-keepassxc-cli}
+    printf 'fixture-password\nfixture-password\n' | "$xc" db-create -p "$stage/assets/fixture.kdbx"
+    printf 'fixture-password\n' | "$xc" add -u example "$stage/assets/fixture.kdbx" ImportFixture
+    (cd "$stage" && zip -q probe.apk assets/fixture.kdbx)
+fi
 (cd "$stage" && zip -q probe.apk classes.dex)
 "$bt/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --out "$stage/test.apk" "$stage/probe.apk"
 adb="$sdk/platform-tools/adb"
 "$adb" -s "$serial" install -r "$stage/test.apk"
-"$adb" -s "$serial" shell am force-stop com.max.keykeep_passwords
+user=$("$adb" -s "$serial" shell am get-current-user | tr -d '\r')
+"$adb" -s "$serial" shell cmd package install-existing --user "$user" com.max.keykeep.tests
+"$adb" -s "$serial" shell am force-stop --user "$user" com.max.keykeep_passwords
 probe_args=()
 if [[ ${2:-} == --fingerprint ]]; then
     [[ $serial == emulator-* ]] || { echo "Fingerprint simulation requires an emulator" >&2; exit 1; }
     probe_args=(-e fingerprint true)
+elif [[ ${2:-} == --first-import ]]; then
+    probe_args=(-e firstImport true)
 fi
-"$adb" -s "$serial" shell am instrument -w "${probe_args[@]+"${probe_args[@]}"}" com.max.keykeep.tests/.MigrationProbe |
+"$adb" -s "$serial" shell am instrument --user "$user" -w "${probe_args[@]+"${probe_args[@]}"}" com.max.keykeep.tests/.MigrationProbe |
 while IFS= read -r line; do
     echo "$line" | tee -a "$stage/result"
     case "$line" in
@@ -43,4 +54,4 @@ while IFS= read -r line; do
             ;;
     esac
 done
-grep -q 'result=PASS migrated' "$stage/result"
+grep -Eq 'result=PASS (migrated|first import)' "$stage/result"

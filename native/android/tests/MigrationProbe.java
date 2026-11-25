@@ -9,10 +9,11 @@ import java.util.concurrent.*;
 /** UI acceptance on a dedicated emulator previously seeded with the Flutter repository. */
 public final class MigrationProbe extends Instrumentation {
     private WebView web;
-    private boolean testFingerprint;
+    private boolean testFingerprint, testImport;
     @Override public void onCreate(Bundle args){
         super.onCreate(args);
         testFingerprint=args!=null && "true".equals(args.getString("fingerprint"));
+        testImport=args!=null && "true".equals(args.getString("firstImport"));
         start();
     }
     private WebView find(View v){
@@ -31,6 +32,61 @@ public final class MigrationProbe extends Instrumentation {
     private void waitFor(String condition)throws Exception{
         for(int i=0;i<120;i++){if("true".equals(evaluate(condition)))return;Thread.sleep(200);}
         throw new AssertionError("Timed out at "+condition+"; gate="+evaluate("typeof el==='function' && [el('gate').hidden,el('bioUnlock').hidden,el('bioUnlock').disabled,pendingAutoUnlock,document.hidden,document.hasFocus(),bioState.enabled,bioState.autoPrompt,el('settingsMessage').textContent,el('message').textContent].join('|')"));
+    }
+    private android.view.accessibility.AccessibilityNodeInfo picker(String title)throws Exception{
+        for(int i=0;i<100;i++){
+            android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+            if(root!=null && String.valueOf(root.getPackageName()).contains("documentsui")){
+                if(title==null)return root;
+                for(android.view.accessibility.AccessibilityNodeInfo node:root.findAccessibilityNodeInfosByText(title)){
+                    if(title.contentEquals(node.getText()==null?"":node.getText()))return node;
+                }
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError("System picker missing "+title);
+    }
+    private void importOnFirstRun()throws Exception{
+        waitFor("typeof el==='function' && el('enter').textContent==='Создать хранилище'");
+        android.content.ContentResolver resolver=getTargetContext().getContentResolver();
+        String filename="KeyKeep-QA-"+System.currentTimeMillis()+".kdbx";
+        android.content.ContentValues metadata=new android.content.ContentValues();
+        metadata.put("_display_name",filename);
+        metadata.put("mime_type","application/octet-stream");
+        metadata.put("relative_path","Download/");
+        metadata.put("is_pending",1);
+        android.net.Uri uri=resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,metadata);
+        try{
+            try(java.io.InputStream in=getContext().getAssets().open("fixture.kdbx");java.io.OutputStream out=resolver.openOutputStream(uri)){
+                byte[] buf=new byte[8192];int n;
+                while((n=in.read(buf))!=-1)out.write(buf,0,n);
+            }
+            metadata.clear();metadata.put("is_pending",0);resolver.update(uri,metadata,null,null);
+            evaluate("el('startupExchange').open=true;el('startupDb').click()");
+            picker(null);
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
+            for(int i=0;i<100;i++){
+                android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+                if(root!=null && "com.max.keykeep_passwords".contentEquals(root.getPackageName()))break;
+                Thread.sleep(100);
+            }
+            waitFor("typeof el==='function' && !el('gate').hidden && !exists && !el('startupExchange').hidden && !el('startupDbName').textContent");
+            evaluate("el('startupExchange').open=true;el('startupDb').click()");
+            android.view.accessibility.AccessibilityNodeInfo item=picker(filename);
+            while(item!=null && !item.isClickable())item=item.getParent();
+            if(item==null || !item.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))throw new AssertionError("Cannot select fixture");
+            waitFor("typeof el==='function' && el('startupDbName').textContent.endsWith('.kdbx') && el('startupExchange').open");
+            evaluate("el('pin').value=el('repeat').value='fixture-pin';el('startupPassword').value='wrong';el('enter').click()");
+            waitFor("el('message').textContent.includes('пароль') && !el('gate').hidden");
+            evaluate("call('status').then(s=>window.testExists=s.exists)");
+            waitFor("window.testExists===false");
+            evaluate("el('startupPassword').value='fixture-password';el('enter').click()");
+            waitFor("!el('vault').hidden && el('rows').textContent.includes('ImportFixture')");
+            evaluate("el('lock').click()");
+            waitFor("!el('gate').hidden && el('enter').textContent==='Открыть' && el('startupExchange').hidden");
+            evaluate("el('pin').value='fixture-pin';el('enter').click()");
+            waitFor("!el('vault').hidden && el('rows').textContent.includes('ImportFixture')");
+        }finally{resolver.delete(uri,null,null);}
     }
     private void editorWithKeyboard()throws Exception{
         if(android.os.Build.VERSION.SDK_INT<30)return;
@@ -126,6 +182,11 @@ public final class MigrationProbe extends Instrumentation {
             Intent i=new Intent().setClassName("com.max.keykeep_passwords","com.max.keykeep_passwords.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity activity=startActivitySync(i);
             runOnMainSync(()->web=find(activity.getWindow().getDecorView()));
+            if(testImport){
+                importOnFirstRun();
+                result.putString("result","PASS first import through Android system picker, cancellation, wrong password, retry, lock and reopen");
+                finish(Activity.RESULT_OK,result);return;
+            }
             waitFor("typeof el==='function' && el('enter').textContent==='Открыть' && !el('gate').hidden");
             evaluate("el('pin').value='123456';el('enter').click()");
             waitFor("!el('vault').hidden && el('rows').children.length>0");
