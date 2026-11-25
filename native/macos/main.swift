@@ -167,6 +167,9 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
         }
         #if UI_TEST
+        if op == "testTouchPreflight" {
+            reply(["value": ProcessInfo.processInfo.environment["KEYKEEP_TOUCH_PREFLIGHT"] == "1"]);return
+        }
         if op == "testMcpPost" {
             guard let token=args["token"] as? String, let rpc=args["rpc"] as? [String:Any] else {reply(["error":"Invalid fixture"]);return}
             var request=URLRequest(url:URL(string:"http://127.0.0.1:8766/mcp")!)
