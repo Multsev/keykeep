@@ -100,4 +100,16 @@ for(const allow of [false,true]){
   await until(()=>!el('mcpApproval').open,'MCP decision closed');
 }
 el('mcpToggle').click();await until(()=>el('mcpControls').hidden,'MCP stop');el('dismiss').click();
-return 'WKWebView: create, save, reopen, PIN rotation, button weight and MCP HTTP approvals passed';
+el('settings').click();await until(()=>el('security').open,'erase settings');
+el('eraseVault').click();await until(()=>el('eraseDialog').open,'erase prompt');
+el('cancelErase').click();await until(()=>!el('eraseDialog').open,'erase cancelled');
+if(!(await call('status')).exists)throw Error('cancel erased vault');
+el('eraseVault').click();el('erasePin').value='wrong';el('eraseForm').requestSubmit();
+await until(()=>el('eraseMessage').textContent==='Неверный текущий PIN','erase wrong PIN');
+if(!(await call('status')).exists)throw Error('wrong PIN erased vault');
+el('erasePin').value='new-test-pin';el('eraseForm').requestSubmit();
+await until(()=>!el('gate').hidden && el('enter').textContent==='Создать хранилище','erase complete');
+el('pin').value=el('repeat').value='after-erase';el('enter').click();
+await until(()=>!el('vault').hidden && el('tree').children.length,'create after erase');
+if(el('rows').children.length)throw Error('old entry survived');
+return 'WKWebView: create, save, reopen, PIN rotation, button weight MCP HTTP approvals and vault erasure passed';

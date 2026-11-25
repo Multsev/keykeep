@@ -46,6 +46,7 @@ async function reset(promptOnOpen=false) {
   clearEntryExtras();
   el('folderDialog').close();
   el('confirmDeletion').close();
+  el('eraseDialog').close();
   clearDiskPreview();
   ++listing;
   document.querySelectorAll('form').forEach(f => f.reset());
@@ -291,4 +292,16 @@ on('deleteEntry','click',()=>{
     await call('deleteEntry',{id,confirmed:true});
     current=null;clearEntryExtras();el('editor').reset();el('editor').hidden=true;screen('entries');await refresh();
   });
+});
+
+on('eraseVault','click',()=>{el('eraseDialog').showModal();el('cancelErase').focus();});
+on('cancelErase','click',()=>el('eraseDialog').close());
+el('eraseDialog').addEventListener('close',()=>{
+  el('erasePin').value='';el('eraseMessage').textContent='';
+});
+on('eraseForm','submit',async()=>{
+  el('confirmErase').disabled=true;
+  try{await call('eraseVault',{currentPin:el('erasePin').value,confirmed:true});await reset();}
+  catch(error){el('eraseMessage').textContent=error.message;}
+  finally{el('confirmErase').disabled=false;}
 });

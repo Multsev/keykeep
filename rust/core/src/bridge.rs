@@ -7,15 +7,14 @@ use std::{
 };
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn kk_new(path: *const c_char, device: *const u8) -> *mut Session {
-    if path.is_null() || device.is_null() {
+unsafe extern "C" fn kk_new(path: *const c_char) -> *mut Session {
+    if path.is_null() {
         return ptr::null_mut();
     }
     let Ok(path) = (unsafe { CStr::from_ptr(path) }).to_str() else {
         return ptr::null_mut();
     };
-    let key = unsafe { device.cast::<[u8; 32]>().read() };
-    Session::new(path.into(), key).map_or(ptr::null_mut(), |s| Box::into_raw(Box::new(s)))
+    Session::new(path.into(), [0; 32]).map_or(ptr::null_mut(), |s| Box::into_raw(Box::new(s)))
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn kk_call(s: *mut Session, request: *const c_char) -> *mut c_char {
@@ -55,4 +54,32 @@ unsafe extern "C" fn kk_authenticated_pin(s: *mut Session) -> *mut c_char {
         return ptr::null_mut();
     };
     CString::new(pin).map_or(ptr::null_mut(), CString::into_raw)
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn kk_finish_erasure(session: *mut Session, key: *const u8) -> bool {
+    let Some(session) = (unsafe { session.as_mut() }) else {
+        return false;
+    };
+    if key.is_null() {
+        return false;
+    }
+    session
+        .finish_erasure(unsafe { key.cast::<[u8; 32]>().read() })
+        .is_ok()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn kk_erasing(s: *mut Session) -> bool {
+    unsafe { s.as_ref() }.is_some_and(Session::erasing)
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn kk_initialize_device(s: *mut Session, key: *const u8) -> bool {
+    let Some(s) = (unsafe { s.as_mut() }) else {
+        return false;
+    };
+    if key.is_null() {
+        return false;
+    }
+    s.initialize_device(unsafe { key.cast::<[u8; 32]>().read() })
 }

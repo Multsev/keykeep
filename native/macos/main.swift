@@ -6,18 +6,19 @@ import WebKit
 
 struct PlatformFailure: Error {}
 
-func deviceKey(for path: URL) throws -> Data {
-    let query: [String: Any] = [
+private let deviceKeyQuery: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: "com.max.keykeep.device",
         kSecAttrAccount as String: "local-v1"
     ]
+func deviceKey(for path: URL, replacing: Bool = false) throws -> Data {
+    let query = deviceKeyQuery
     var lookup = query
     lookup[kSecReturnData as String] = true
     var result: CFTypeRef?
     let status = SecItemCopyMatching(lookup as CFDictionary, &result)
     if status == errSecSuccess, let data = result as? Data, data.count == 32 { return data }
-    guard status == errSecItemNotFound, !FileManager.default.fileExists(atPath: path.path) else { throw PlatformFailure() }
+    guard status == errSecItemNotFound, replacing || !FileManager.default.fileExists(atPath: path.path) else { throw PlatformFailure() }
     var data = Data(count: 32)
     let generated = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
     guard generated == errSecSuccess else { throw PlatformFailure() }
@@ -58,17 +59,21 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             fingerprint = Fingerprint(file: dir.appendingPathComponent("touch-id.credential"))
             let file = dir.appendingPathComponent("vault.kk")
-            #if UI_TEST
-            let key = Data(repeating: 61, count: 32)
-            if let fixture = ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] {
-                importURL = URL(fileURLWithPath: fixture)
-            }
-            defer { testRoot = base }
-            #else
-            let key = try deviceKey(for: file)
-            #endif
-            session = key.withUnsafeBytes { kk_new(file.path, $0.bindMemory(to: UInt8.self).baseAddress) }
+            session=kk_new(file.path)
             guard session != nil else { throw PlatformFailure() }
+            if kk_erasing(session) { try finishErasure() }
+            else {
+                #if UI_TEST
+                let key=Data(repeating:61,count:32)
+                #else
+                let key=try deviceKey(for:file)
+                #endif
+                guard key.withUnsafeBytes({kk_initialize_device(session,$0.bindMemory(to:UInt8.self).baseAddress)}) else {throw PlatformFailure()}
+            }
+            #if UI_TEST
+            if let fixture=ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] {importURL=URL(fileURLWithPath:fixture)}
+            testRoot=base
+            #endif
         } catch {
             let alert = NSAlert()
             alert.messageText = "Не удалось открыть хранилище"
@@ -91,6 +96,19 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(lock), name: Notification.Name("com.apple.screenIsLocked"), object: nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+    private func finishErasure() throws {
+        prompt?.invalidate();prompt=nil;oauthCallback=nil;importURL=nil;keyFileURL=nil
+        try fingerprint.disable()
+        #if UI_TEST
+        let key=Data(repeating:72,count:32)
+        #else
+        UserDefaults.standard.removeObject(forKey:"bioAutoPrompt")
+        let status=SecItemDelete(deviceKeyQuery as CFDictionary)
+        guard status==errSecSuccess || status==errSecItemNotFound else {throw PlatformFailure()}
+        let key=try deviceKey(for:fingerprint.file.deletingLastPathComponent().appendingPathComponent("vault.kk"),replacing:true)
+        #endif
+        guard key.withUnsafeBytes({ kk_finish_erasure(session,$0.bindMemory(to:UInt8.self).baseAddress) }) else {throw PlatformFailure()}
     }
     func applicationDidHide(_ notification: Notification) { lock() }
     @objc func lock() {
@@ -162,6 +180,16 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             return
         }
         #endif
+        if op == "beginErase" {reply(["error":"Недоступно"]);return}
+        if op == "eraseVault" {
+            var request=args
+            request["op"]="beginErase"
+            let result=core(request)
+            if result["error"] != nil {reply(result);return}
+            do {try finishErasure();reply(["value":NSNull()])}
+            catch {reply(["error":"Откройте KeyKeep повторно для завершения удаления"])}
+            return
+        }
         if op == "diskConnect" {
             let result=core(["op":"diskAuthorize"])
             guard let raw=result["value"] as? String, let url=URL(string:raw),url.scheme=="https",url.host=="oauth.yandex.ru" else {reply(result);return}

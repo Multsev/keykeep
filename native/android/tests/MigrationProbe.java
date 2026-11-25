@@ -9,11 +9,13 @@ import java.util.concurrent.*;
 /** UI acceptance on a dedicated emulator previously seeded with the Flutter repository. */
 public final class MigrationProbe extends Instrumentation {
     private WebView web;
-    private boolean testFingerprint, testImport;
+    private boolean testFingerprint, testImport, testErase, verifyErase;
     @Override public void onCreate(Bundle args){
         super.onCreate(args);
         testFingerprint=args!=null && "true".equals(args.getString("fingerprint"));
         testImport=args!=null && "true".equals(args.getString("firstImport"));
+        testErase=args!=null && "true".equals(args.getString("eraseFixture"));
+        verifyErase=args!=null && "true".equals(args.getString("verifyErase"));
         start();
     }
     private WebView find(View v){
@@ -31,7 +33,7 @@ public final class MigrationProbe extends Instrumentation {
     }
     private void waitFor(String condition)throws Exception{
         for(int i=0;i<120;i++){if("true".equals(evaluate(condition)))return;Thread.sleep(200);}
-        throw new AssertionError("Timed out at "+condition+"; gate="+evaluate("typeof el==='function' && [el('gate').hidden,el('bioUnlock').hidden,el('bioUnlock').disabled,pendingAutoUnlock,document.hidden,document.hasFocus(),bioState.enabled,bioState.autoPrompt,el('settingsMessage').textContent,el('message').textContent].join('|')"));
+        throw new AssertionError("Timed out at "+condition+"; gate="+evaluate("typeof el==='function' && [el('gate').hidden,el('bioUnlock').hidden,el('bioUnlock').disabled,pendingAutoUnlock,document.hidden,document.hasFocus(),bioState.enabled,bioState.autoPrompt,el('settingsMessage').textContent,el('eraseDialog').open, el('eraseMessage').textContent,el('message').textContent].join('|')"));
     }
     private android.view.accessibility.AccessibilityNodeInfo picker(String title)throws Exception{
         for(int i=0;i<100;i++){
@@ -87,6 +89,30 @@ public final class MigrationProbe extends Instrumentation {
             evaluate("el('pin').value='fixture-pin';el('enter').click()");
             waitFor("!el('vault').hidden && el('rows').textContent.includes('ImportFixture')");
         }finally{resolver.delete(uri,null,null);}
+    }
+    private void eraseFixture()throws Exception{
+        android.content.Context ctx=getTargetContext();
+        if(ctx.getSystemService(android.os.UserManager.class).isSystemUser())throw new AssertionError("Requires secondary synthetic user");
+        waitFor("typeof el==='function' && exists && !el('gate').hidden");
+        evaluate("el('pin').value='fixture-pin';el('enter').click()");
+        waitFor("!el('vault').hidden && el('rows').children.length===1 && el('rows').textContent.includes('ImportFixture')");
+        android.content.SharedPreferences envelopes=ctx.getSharedPreferences("rust-key-envelopes",0);
+        String alias="keykeep.rust.device.v1";
+        String old=envelopes.getString(alias,null);
+        if(old==null)throw new AssertionError("Missing test device key");
+        evaluate("el('settings').click()");waitFor("el('security').open");
+        evaluate("el('eraseVault').click();el('cancelErase').click()");
+        waitFor("!el('eraseDialog').open && el('security').open");
+        evaluate("el('eraseVault').click()");
+        waitFor("el('eraseDialog').open");
+        evaluate("el('erasePin').value='invalid';el('eraseForm').requestSubmit()");
+        waitFor("el('eraseMessage').textContent==='Неверный текущий PIN'");
+        evaluate("el('erasePin').value='fixture-pin';el('eraseForm').requestSubmit()");
+        waitFor("!el('gate').hidden && !exists && el('enter').textContent==='Создать хранилище'");
+        if(old.equals(envelopes.getString(alias,null)) || !envelopes.contains(alias))throw new AssertionError("Device key was not rotated");
+        if(new java.io.File(ctx.getNoBackupFilesDir(),"vault.kk").exists())throw new AssertionError("Vault still exists");
+        evaluate("el('pin').value=el('repeat').value='fresh-test';el('enter').click()");
+        waitFor("!el('vault').hidden && el('tree').children.length===1 && !el('rows').children.length");
     }
     private void editorWithKeyboard()throws Exception{
         if(android.os.Build.VERSION.SDK_INT<30)return;
@@ -182,6 +208,18 @@ public final class MigrationProbe extends Instrumentation {
             Intent i=new Intent().setClassName("com.max.keykeep_passwords","com.max.keykeep_passwords.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity activity=startActivitySync(i);
             runOnMainSync(()->web=find(activity.getWindow().getDecorView()));
+            if(verifyErase){
+                waitFor("typeof el==='function' && exists && !el('gate').hidden");
+                evaluate("el('pin').value='fresh-test';el('enter').click()");
+                waitFor("!el('vault').hidden && el('tree').children.length===1 && !el('rows').children.length");
+                result.putString("result","PASS erasure persisted after process restart");
+                finish(Activity.RESULT_OK,result);return;
+            }
+            if(testErase){
+                eraseFixture();
+                result.putString("result","PASS erasure cancelled, PIN checked, device key rotated and fresh vault created");
+                finish(Activity.RESULT_OK,result);return;
+            }
             if(testImport){
                 importOnFirstRun();
                 result.putString("result","PASS first import through Android system picker, cancellation, wrong password, retry, lock and reopen");

@@ -63,10 +63,14 @@ public final class MainActivity extends Activity {
             exchange = new ExchangeFiles(this);
             keys = new DeviceKeys(this); legacy = new LegacyVault(this);
             vault = new File(getNoBackupFilesDir(), "vault.kk");
-            byte[] key = keys.deviceKey(vault.exists());
-            try { handle = VaultBridge.open(bytes(vault.getPath()),key); }
-            finally { Arrays.fill(key,(byte)0); }
-            if (handle == 0) throw new IllegalStateException();
+            handle=VaultBridge.open(bytes(vault.getPath()));
+            if(handle==0)throw new IllegalStateException();
+            if(VaultBridge.erasing(handle))finishErasure();
+            else{
+                byte[] key=keys.deviceKey(vault.exists());
+                try{if(!VaultBridge.initializeDevice(handle,key))throw new IllegalStateException();}
+                finally{Arrays.fill(key,(byte)0);}
+            }
             web = new WebView(this);
             web.setBackgroundColor(Color.TRANSPARENT);
             web.getSettings().setJavaScriptEnabled(true);
@@ -124,6 +128,13 @@ public final class MainActivity extends Activity {
             String name=args.getString("op");
             boolean migrate=!vault.exists() && legacy.exists();
             switch (name) {
+            case "beginErase":error(id,"Недоступно");return;
+            case "eraseVault":
+                JSONObject auth=core(args.put("op","beginErase"));
+                if(auth.has("error")){reply(id,auth);return;}
+                try{finishErasure();value(id,JSONObject.NULL);}
+                catch(Exception e){error(id,"Откройте KeyKeep повторно для завершения удаления");}
+                return;
             case "diskConnect":
                 JSONObject authorized=core(op("diskAuthorize"));
                 if(authorized.has("error")){reply(id,authorized);return;}
@@ -198,6 +209,14 @@ public final class MainActivity extends Activity {
             }
             reply(id,core(args));
         } catch (Exception e) { error(id,"Не удалось выполнить операцию. Проверьте настройки защиты устройства."); }
+    }
+    private void finishErasure() throws Exception {
+        cancelPrompt();oauthCallback=null;exchange.clear();
+        legacy.erase();
+        getPreferences(MODE_PRIVATE).edit().remove("bioAutoPrompt").apply();
+        byte[] fresh=keys.replaceDeviceKey();
+        try{if(!VaultBridge.finishErasure(handle,fresh))throw new IllegalStateException();}
+        finally{Arrays.fill(fresh,(byte)0);}
     }
     private void cancelPrompt() { if(pending!=null)pending.cancel();pending=null; }
     private void confirmOwner(int id) throws Exception {

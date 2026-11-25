@@ -33,6 +33,11 @@ if [[ ${2:-} == --fingerprint ]]; then
     probe_args=(-e fingerprint true)
 elif [[ ${2:-} == --first-import ]]; then
     probe_args=(-e firstImport true)
+elif [[ ${2:-} == --erase-fixture ]]; then
+    [[ $serial == emulator-* && $user != 0 ]] || { echo "Requires secondary test user on emulator" >&2; exit 1; }
+    probe_args=(-e eraseFixture true)
+elif [[ ${2:-} == --verify-erasure ]]; then
+    probe_args=(-e verifyErase true)
 fi
 "$adb" -s "$serial" shell am instrument --user "$user" -w "${probe_args[@]+"${probe_args[@]}"}" com.max.keykeep.tests/.MigrationProbe |
 while IFS= read -r line; do
@@ -54,4 +59,10 @@ while IFS= read -r line; do
             ;;
     esac
 done
-grep -Eq 'result=PASS (migrated|first import)' "$stage/result"
+grep -Eq 'result=PASS (migrated|first import|erasure)' "$stage/result"
+
+if [[ ${2:-} == --erase-fixture ]]; then
+    "$adb" -s "$serial" shell am force-stop --user "$user" com.max.keykeep_passwords
+    "$adb" -s "$serial" shell am instrument --user "$user" -w -e verifyErase true com.max.keykeep.tests/.MigrationProbe | tee "$stage/restart"
+    grep -q 'PASS erasure persisted' "$stage/restart"
+fi

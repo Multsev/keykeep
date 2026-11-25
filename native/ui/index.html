@@ -48,4 +48,10 @@
 <output id="mcpState"></output><button id="mcpToggle">Включить MCP</button>
 <div id="mcpControls" hidden><label class="check"><input type="checkbox" id="mcpWrite"> Разрешить запросы на запись</label>
 <div class="field-actions"><button id="mcpCopy">Копировать команду подключения</button><button id="mcpRotate">Сменить токен</button></div></div>
-</div></details><output id="settingsMessage" role="status"></output></div></dialog><dialog id="mcpApproval" aria-labelledby="mcpAction" aria-describedby="mcpDetails"><div class="settings-body"><h2 id="mcpAction"></h2><p id="mcpDetails"></p><div class="field-actions"><button id="mcpDeny" autofocus>Отклонить</button><button id="mcpAllow">Разрешить один раз</button></div></div></dialog><output role="alert" id="message"></output><script src="disk.js"></script><script src="entry.js"></script><script src="app.js"></script><script src="mcp.js"></script></html>
+</div></details><button id="eraseVault">Удалить локальное хранилище</button><output id="settingsMessage" role="status"></output></div></dialog><dialog id="eraseDialog" aria-labelledby="eraseTitle"><form id="eraseForm" class="settings-body">
+<h2 id="eraseTitle">Удалить локальное хранилище?</h2>
+<p>С этого устройства будут удалены записи, локальные снимки, ключи и настройки входа и интеграций. Для восстановления записей понадобится отдельная копия KDBX.</p>
+<label>Текущий мастер-PIN<input type="password" id="erasePin" autocomplete="off" required></label>
+<output id="eraseMessage" role="alert"></output>
+<div class="field-actions"><button type="button" id="cancelErase" autofocus>Отмена</button><button id="confirmErase">Удалить хранилище</button></div>
+</form></dialog><dialog id="mcpApproval" aria-labelledby="mcpAction" aria-describedby="mcpDetails"><div class="settings-body"><h2 id="mcpAction"></h2><p id="mcpDetails"></p><div class="field-actions"><button id="mcpDeny" autofocus>Отклонить</button><button id="mcpAllow">Разрешить один раз</button></div></div></dialog><output role="alert" id="message"></output><script src="disk.js"></script><script src="entry.js"></script><script src="app.js"></script><script src="mcp.js"></script></html>

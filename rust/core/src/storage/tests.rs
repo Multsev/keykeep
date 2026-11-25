@@ -91,3 +91,47 @@ fn interrupted_save_preserves_committed_data_and_releases_session_lock() {
     assert_eq!(rows["entries"][0]["title"], "new");
     assert_eq!(fs::read(snapshot).unwrap(), previous);
 }
+
+#[test]
+fn erasure_resumes_after_restart_and_preserves_unrelated_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.kk");
+    let export = dir.path().join("export.kdbx");
+    fs::write(&export, b"external copy").unwrap();
+    let mut s = Session::new(path.clone(), DEVICE).unwrap();
+    s.call(json!({"op":"create","pin":PIN})).unwrap();
+    for ext in ["before-import.kk", "before-restore.kk"] {
+        fs::copy(&path, path.with_extension(ext)).unwrap();
+    }
+    for (pin, confirmed) in [(PIN, false), ("incorrect", true)] {
+        assert!(
+            s.call(json!({"op":"beginErase","currentPin":pin,"confirmed":confirmed}))
+                .is_err()
+        );
+        assert!(path.exists());
+        assert!(!path.with_extension("erasing").exists());
+    }
+    s.call(json!({"op":"beginErase","currentPin":PIN,"confirmed":true}))
+        .unwrap();
+    assert!(s.active_pin().is_none());
+    drop(s);
+    let mut s = Session::new(path.clone(), [0; 32]).unwrap();
+    assert!(s.erasing());
+    assert!(s.call(json!({"op":"unlock","pin":PIN})).is_err());
+    s.finish_erasure([9; 32]).unwrap();
+    for ext in [
+        "kk",
+        "attempts",
+        "before-import.kk",
+        "before-restore.kk",
+        "erasing",
+    ] {
+        assert!(!path.with_extension(ext).exists());
+    }
+    assert_eq!(fs::read(export).unwrap(), b"external copy");
+    assert!(s.finish_erasure([0; 32]).is_err());
+    s.call(json!({"op":"create","pin":PIN})).unwrap();
+    let data = fs::read(path).unwrap();
+    assert!(open(&data, PIN, &DEVICE).is_err());
+    assert!(open(&data, PIN, &[9; 32]).is_ok());
+}

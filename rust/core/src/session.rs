@@ -13,6 +13,7 @@ pub struct Session {
     cloud_job: Option<crate::yandex::Job>,
     restore_revision: Option<Vec<u8>>,
     attempts: crate::attempts::Attempts,
+    erasing: bool,
     path: PathBuf,
     device: Zeroizing<[u8; 32]>,
     pub(crate) unlocked: Option<(Zeroizing<String>, Vault)>,
@@ -33,6 +34,10 @@ impl Session {
             return Err("Хранилище уже открыто");
         }
         Ok(Self {
+            erasing: path
+                .with_extension("erasing")
+                .try_exists()
+                .map_err(|_| "Ошибка доступа")?,
             mcp: None,
             cloud_job: None,
             restore_revision: None,
@@ -99,6 +104,37 @@ impl Session {
             Ok(id.to_owned())
         }
     }
+    pub(crate) fn erasing(&self) -> bool {
+        self.erasing
+    }
+    pub(crate) fn initialize_device(&mut self, key: [u8; 32]) -> bool {
+        if self.erasing || self.unlocked.is_some() {
+            return false;
+        }
+        self.device = Zeroizing::new(key);
+        true
+    }
+    pub(crate) fn finish_erasure(&mut self, key: [u8; 32]) -> Result<(), &'static str> {
+        if !self.erasing {
+            return Err("Удаление не подтверждено");
+        }
+        let remove = |path: &std::path::Path| match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err("Не удалось завершить удаление"),
+        };
+        for ext in ["before-import.kk", "before-restore.kk", "attempts"] {
+            remove(&self.path.with_extension(ext))?;
+        }
+        remove(&self.path)?;
+        let dir = fs::File::open(self.path.parent().ok_or("Ошибка каталога")?)
+            .map_err(|_| "Ошибка каталога")?;
+        dir.sync_all().map_err(|_| "Ошибка сохранения")?;
+        remove(&self.path.with_extension("erasing"))?;
+        self.device = Zeroizing::new(key);
+        self.erasing = false;
+        dir.sync_all().map_err(|_| "Ошибка сохранения")
+    }
     fn keyfile(request: &Value) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         use base64::{Engine, engine::general_purpose::STANDARD};
         request["keyfile"]
@@ -125,6 +161,26 @@ impl Session {
                 .ok_or("Некорректный запрос")
         };
         let op = arg("op")?;
+        if self.erasing {
+            return Err("Требуется завершить удаление. Откройте приложение повторно.");
+        }
+        if op == "beginErase" {
+            if r["confirmed"] != true {
+                return Err("Подтвердите удаление хранилища");
+            }
+            if self.cloud_job.is_some() {
+                return Err("Дождитесь завершения синхронизации");
+            }
+            self.call(json!({"op":"verifyPin","currentPin":arg("currentPin")?}))?;
+            storage::persist(&self.path.with_extension("erasing"), b"KeyKeep erasure v1")
+                .map_err(|_| "Не удалось начать удаление")?;
+            self.erasing = true;
+            self.unlocked = None;
+            self.mcp = None;
+            self.restore_revision = None;
+            self.device = Zeroizing::new([0; 32]);
+            return Ok(Value::Null);
+        }
         if matches!(op, "unlock" | "migrateAndroid" | "verifyPin" | "changePin") {
             self.attempts.check()?;
         }

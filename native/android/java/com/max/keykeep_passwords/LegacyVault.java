@@ -13,7 +13,7 @@ import javax.crypto.spec.OAEPParameterSpec;
 import javax.crypto.spec.PSource;
 import org.json.JSONObject;
 
-/** Read-only adapter for flutter_secure_storage 10.3.1 with KeyKeep's default options. */
+/** Migration adapter for flutter_secure_storage 10.3.1 with KeyKeep's default options. */
 final class LegacyVault {
     private static final String PREFIX = "VGhpcyBpcyB0aGUgcHJlZml4IGZvciBhIHNlY3VyZSBzdG9yYWdlCg_";
     private static final String WRAPPED = "AESVGhpcyBpcyB0aGUga2V5IGZvciBhIHNlY3VyZSBzdG9yYWdlIEFFUyBLZXkK";
@@ -25,6 +25,18 @@ final class LegacyVault {
     }
     boolean exists() {
         return values.contains(PREFIX+"master_pin_verifier") || values.contains(PREFIX+"vault_entries") || values.contains(PREFIX+"vault_folders");
+    }
+    void erase() throws Exception {
+        SharedPreferences.Editor edit=values.edit();
+        for(String name:new String[]{"master_pin_salt","master_pin_verifier","vault_entries","vault_folders","biometric_unlock_pin","biometric_auto_prompt","vault_modified_at","failed_unlock_count","unlock_blocked_until","last_cloud_sync_at","pending_cloud_sync","keykeep_mcp_token","yandex_disk_sync_folder","yandex_disk_client_id","yandex_disk_access_token","yandex_disk_state","yandex_disk_verifier"})
+            edit.remove(PREFIX+name);
+        if(!edit.commit())throw new IllegalStateException();
+        for(String name:values.getAll().keySet())if(name.startsWith(PREFIX))return;
+        String alias=context.getPackageName()+".FlutterSecureStoragePluginKeyOAEP";
+        KeyStore keys=KeyStore.getInstance("AndroidKeyStore");keys.load(null);
+        if(keys.containsAlias(alias))keys.deleteEntry(alias);
+        if(!context.getSharedPreferences("FlutterSecureKeyStorage",Context.MODE_PRIVATE).edit().remove(WRAPPED).commit())
+            throw new IllegalStateException();
     }
     JSONObject migration(String pin) throws Exception {
         KeyStore keys = KeyStore.getInstance("AndroidKeyStore");

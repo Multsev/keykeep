@@ -69,6 +69,12 @@ final class DeviceKeys {
         store(DEVICE, cipher(DEVICE,true), device);
         return device;
     }
+    byte[] replaceDeviceKey() throws Exception {
+        disableBiometric();
+        if(keys.containsAlias(DEVICE))keys.deleteEntry(DEVICE);
+        if(!prefs.edit().remove(DEVICE).commit())throw new IllegalStateException();
+        return deviceKey(false);
+    }
     void disableBiometric() throws Exception {
         if (!prefs.edit().remove(BIO).commit()) throw new IllegalStateException();
         if (keys.containsAlias(BIO)) keys.deleteEntry(BIO);
