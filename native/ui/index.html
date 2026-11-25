@@ -1,10 +1,16 @@
 <!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; form-action 'none'; base-uri 'none'"><title>KeyKeep</title><link rel="stylesheet" href="app.css">
-<main id="gate"><form id="access"><h1>KeyKeep</h1><label>Мастер-PIN<input id="pin" type="password" required autocomplete="off"></label><label id="repeatLabel">Повторите PIN<input id="repeat" type="password" autocomplete="off"></label><details id="startupExchange" hidden><summary>Импортировать базу KeePass</summary><div class="exchange-body">
+<main id="gate"><form id="access"><h1>KeyKeep</h1><small id="activeVaultName" hidden></small><label>Мастер-PIN<input id="pin" type="password" required autocomplete="off"></label><label id="repeatLabel">Повторите PIN<input id="repeat" type="password" autocomplete="off"></label><details id="startupExchange" hidden><summary>Импортировать базу KeePass</summary><div class="exchange-body">
 <div><button id="startupDb" type="button">Выбрать базу KDBX</button> <span id="startupDbName"></span></div>
 <div><button id="startupKey" type="button">Ключевой файл</button> <span id="startupKeyName"></span></div>
 <button id="startupClear" type="button">Сбросить выбор файлов</button>
 <label>Пароль базы KeePass<input type="password" autocomplete="off" id="startupPassword"></label>
-</div></details><button id="enter">Открыть</button><button id="bioUnlock" type="button" hidden>Войти по отпечатку</button></form></main>
+</div></details><button id="enter">Открыть</button><button id="bioUnlock" type="button" hidden>Войти по отпечатку</button><button type="button" id="allVaults" hidden>Все хранилища</button></form></main>
+<dialog id="vaultCatalog" aria-labelledby="catalogTitle"><div class="settings-body">
+<header><h2 id="catalogTitle">Все хранилища</h2><button type="button" id="catalogClose">Закрыть</button></header>
+<div id="catalogRows"></div>
+<form id="catalogNew"><label>Название нового хранилища<input id="catalogName" required maxlength="80" placeholder="Например, Личное"></label><button>Создать новое хранилище</button></form>
+<div id="trashQuestion" hidden><p id="trashText"></p><div class="field-actions"><button id="trashCancel">Отмена</button><button id="trashConfirm">Переместить в Корзину</button></div></div>
+<output id="catalogMessage" role="alert"></output></div></dialog>
 <main id="vault" hidden><header><button id="back">Назад</button><input id="search" type="search" aria-label="Поиск" placeholder="Поиск записей"><button id="add">Новая запись</button><button id="settings">Настройки</button><button id="lock">Заблокировать</button></header><div class="panes"><section id="folders"><h2>Папки</h2><nav id="tree" aria-label="Папки"></nav><form id="newFolder"><input id="folderName" placeholder="Название подпапки" required aria-label="Название подпапки"><button>Добавить папку</button></form></section><section id="entries"><div class="pane-heading"><h2>Записи</h2><button type="button" id="folderActions" hidden>Изменить папку</button></div><div id="undoNotice" hidden><span role="status">Запись удалена.</span> <button id="undoDelete" type="button">Отменить удаление</button></div><nav id="rows" aria-label="Записи"></nav></section><section id="detail">
 <form id="editor" hidden>
   <label>Название<input id="title" required></label>

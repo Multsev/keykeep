@@ -63,6 +63,7 @@ async function reset(promptOnOpen=false) {
   setChildren(el('tree')); setChildren(el('rows')); current = null; folder = 'root';
   el('editor').hidden = true; el('vault').hidden = true; el('gate').hidden = false;
   exists = (await call('status')).exists;
+  if(!window.KeyKeep){el('allVaults').hidden=false;await refreshCatalog();}
   el('repeatLabel').hidden = exists; el('startupExchange').hidden = exists;
   el('startupExchange').open=false; updateStartupAction();
   if(!exists) await refreshStartupFiles();
@@ -72,6 +73,52 @@ async function reset(promptOnOpen=false) {
   pendingAutoUnlock=promptOnOpen && !el('bioUnlock').hidden && bio.autoPrompt;
   maybePromptFingerprint();
 }
+let trashCandidate=null;
+async function refreshCatalog(){
+  const data=await call('vaultCatalog');
+  const selected=data.items.find(v=>v.id===data.active);
+  el('activeVaultName').textContent=selected?selected.name:'';
+  el('activeVaultName').hidden=!selected;
+  const rows=data.items.map(v=>{
+    const line=document.createElement('div');line.className='field-actions';
+    const select=actionButton(v.name,()=>catalogAction(async()=>{
+      await call('vaultSelect',{id:v.id});el('vaultCatalog').close();await reset();
+    }));
+    const remove=actionButton('Удалить',()=>{
+      trashCandidate=v.id;
+      el('trashText').textContent='Переместить хранилище «'+v.name+'» со всеми его локальными записями в Корзину Mac?';
+      el('trashQuestion').hidden=false;el('trashCancel').focus();
+    });
+    remove.setAttribute('aria-label','Удалить хранилище '+v.name);
+    line.append(select,remove);return line;
+  });
+  if(!rows.length)rows.push(document.createTextNode('Пока нет локальных хранилищ.'));
+  setChildren(el('catalogRows'),...rows);
+  trashCandidate=null;el('trashQuestion').hidden=true;
+}
+async function catalogAction(action){
+  el('catalogMessage').textContent='';
+  try{await action();}catch(e){el('catalogMessage').textContent=e.message;}
+}
+el('allVaults').onclick=()=>catalogAction(async()=>{
+  pendingAutoUnlock=false;
+  el('pin').value=el('repeat').value='';
+  el('message').textContent='';el('catalogName').value='';
+  el('vaultCatalog').showModal();await refreshCatalog();
+});
+el('catalogClose').onclick=()=>el('vaultCatalog').close();
+el('catalogNew').onsubmit=e=>{
+  e.preventDefault();
+  catalogAction(async()=>{
+    await call('vaultNew',{name:el('catalogName').value});
+    el('vaultCatalog').close();await reset();
+  });
+};
+el('trashCancel').onclick=()=>{trashCandidate=null;el('trashQuestion').hidden=true;};
+el('trashConfirm').onclick=()=>catalogAction(async()=>{
+  if(!trashCandidate)return;
+  await call('vaultTrash',{id:trashCandidate,confirmed:true});await reset();
+});
 function row(label, action, selected) {
   const b = document.createElement('button'); b.textContent = label; b.title = label;
   b.setAttribute('aria-current',String(selected));

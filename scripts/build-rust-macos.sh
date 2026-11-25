@@ -24,7 +24,7 @@ cp native/ui/* "$app/Contents/Resources/ui/"
 version=0.1.0
 sed -e "s/@KEYKEEP_VERSION@/$version/g" -e "s/@KEYKEEP_DATE@/$(date -u +%Y-%m-%d)/g" native/ui/index.html > "$app/Contents/Resources/ui/index.html"
 if [[ -n "$probe" ]]; then cp "native/macos/tests/$probe" "$app/Contents/Resources/smoke.js"; fi
-xcrun swiftc "${flags[@]+"${flags[@]}"}" -O -import-objc-header native/include/KeyKeep.h native/macos/main.swift native/macos/Fingerprint.swift target/release/libkeykeep_core.a -o "$app/Contents/MacOS/KeyKeep"
+xcrun swiftc "${flags[@]+"${flags[@]}"}" -O -import-objc-header native/include/KeyKeep.h native/macos/main.swift native/macos/Fingerprint.swift native/macos/VaultCatalog.swift target/release/libkeykeep_core.a -o "$app/Contents/MacOS/KeyKeep"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>

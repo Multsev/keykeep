@@ -6,13 +6,13 @@ import WebKit
 
 struct PlatformFailure: Error {}
 
-private let deviceKeyQuery: [String: Any] = [
+private func deviceKeyQuery(_ account:String) -> [String: Any] { [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: "com.max.keykeep.device",
-        kSecAttrAccount as String: "local-v1"
-    ]
-func deviceKey(for path: URL, replacing: Bool = false) throws -> Data {
-    let query = deviceKeyQuery
+        kSecAttrAccount as String: account
+    ] }
+func deviceKey(for path: URL, account:String, replacing: Bool = false) throws -> Data {
+    let query = deviceKeyQuery(account)
     var lookup = query
     lookup[kSecReturnData as String] = true
     var result: CFTypeRef?
@@ -55,21 +55,13 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             #else
             let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             #endif
-            let dir = base.appendingPathComponent("KeyKeep")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            fingerprint = Fingerprint(file: dir.appendingPathComponent("touch-id.credential"))
-            let file = dir.appendingPathComponent("vault.kk")
-            session=kk_new(file.path)
-            guard session != nil else { throw PlatformFailure() }
-            if kk_erasing(session) { try finishErasure() }
-            else {
-                #if UI_TEST
-                let key=Data(repeating:61,count:32)
-                #else
-                let key=try deviceKey(for:file)
-                #endif
-                guard key.withUnsafeBytes({kk_initialize_device(session,$0.bindMemory(to:UInt8.self).baseAddress)}) else {throw PlatformFailure()}
-            }
+            catalog = VaultCatalog(base:base)
+            var selected = VaultCatalog.original
+            #if !UI_TEST
+            if let saved = UserDefaults.standard.string(forKey:"selectedVault"),
+               try catalog.items().contains(where: { $0["id"] == saved }) { selected = saved }
+            #endif
+            try activateVault(selected)
             #if UI_TEST
             if let fixture=ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] {importURL=URL(fileURLWithPath:fixture)}
             testRoot=base
@@ -97,16 +89,48 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(lock), name: Notification.Name("com.apple.screenIsLocked"), object: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+    var catalog: VaultCatalog!
+    var activeID = VaultCatalog.original
+    var bioPreference:String { activeID == VaultCatalog.original ? "bioAutoPrompt" : "bioAutoPrompt."+activeID }
+
+    private func activateVault(_ id:String) throws {
+        if session != nil && activeID == id {return}
+        let dir = try catalog.directory(id)
+        try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+        let file = dir.appendingPathComponent("vault.kk")
+        guard let next=kk_new(file.path) else {throw PlatformFailure()}
+        let old=session, oldID=activeID, oldFingerprint=fingerprint
+        session=next;activeID=id;fingerprint=Fingerprint(file:dir.appendingPathComponent("touch-id.credential"))
+        do {
+            if kk_erasing(next) {try finishErasure()}
+            else {
+                #if UI_TEST
+                let key=Data(repeating:61,count:32)
+                #else
+                let key=try deviceKey(for:file,account:id)
+                #endif
+                guard key.withUnsafeBytes({kk_initialize_device(next,$0.bindMemory(to:UInt8.self).baseAddress)}) else {throw PlatformFailure()}
+            }
+        } catch {
+            kk_close(next);session=old;activeID=oldID;fingerprint=oldFingerprint;throw error
+        }
+        if let old {kk_close(old)}
+        prompt?.invalidate();prompt=nil;importURL=nil;keyFileURL=nil;oauthCallback=nil
+        #if !UI_TEST
+        UserDefaults.standard.set(id,forKey:"selectedVault")
+        #endif
+        window?.title = "KeyKeep"
+    }
     private func finishErasure() throws {
         prompt?.invalidate();prompt=nil;oauthCallback=nil;importURL=nil;keyFileURL=nil
         try fingerprint.disable()
         #if UI_TEST
         let key=Data(repeating:72,count:32)
         #else
-        UserDefaults.standard.removeObject(forKey:"bioAutoPrompt")
-        let status=SecItemDelete(deviceKeyQuery as CFDictionary)
+        UserDefaults.standard.removeObject(forKey:self.bioPreference)
+        let status=SecItemDelete(deviceKeyQuery(activeID) as CFDictionary)
         guard status==errSecSuccess || status==errSecItemNotFound else {throw PlatformFailure()}
-        let key=try deviceKey(for:fingerprint.file.deletingLastPathComponent().appendingPathComponent("vault.kk"),replacing:true)
+        let key=try deviceKey(for:fingerprint.file.deletingLastPathComponent().appendingPathComponent("vault.kk"),account:activeID,replacing:true)
         #endif
         guard key.withUnsafeBytes({ kk_finish_erasure(session,$0.bindMemory(to:UInt8.self).baseAddress) }) else {throw PlatformFailure()}
     }
@@ -165,6 +189,38 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                   let answer = kk_call(session, query) else { return ["error":"Ошибка операции"] }
             defer { kk_free_text(answer) }
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
+        }
+        if ["vaultCatalog","vaultSelect","vaultNew","vaultTrash"].contains(op) {
+            let state=core(["op":"status"])["value"] as? [String:Any]
+            guard state?["open"] as? Bool == false else {reply(["error":"Сначала заблокируйте хранилище"]);return}
+            do {
+                if op == "vaultNew" {
+                    let id=try catalog.create(name:args["name"] as? String ?? "")
+                    try activateVault(id)
+                } else if op != "vaultCatalog" {
+                    guard let id=args["id"] as? String,
+                          try catalog.items().contains(where:{$0["id"]==id}) else {throw PlatformFailure()}
+                    if op == "vaultSelect" {try activateVault(id)}
+                    else {
+                        guard args["confirmed"] as? Bool == true else {throw PlatformFailure()}
+                        let dir=try catalog.directory(id)
+                        let other=id != activeID ? kk_new(dir.appendingPathComponent("vault.kk").path) : nil
+                        guard id == activeID || other != nil else {throw PlatformFailure()}
+                        defer {if let other {kk_close(other)}}
+                        #if UI_TEST
+                        try FileManager.default.moveItem(at:dir,to:catalog.base.appendingPathComponent("trash-"+UUID().uuidString))
+                        #else
+                        try FileManager.default.trashItem(at:dir,resultingItemURL:nil)
+                        #endif
+                        if activeID==id {
+                            kk_close(session);session=nil
+                            try activateVault(try catalog.items().first?["id"] ?? VaultCatalog.original)
+                        }
+                    }
+                }
+                reply(["value":["items":try catalog.items(),"active":activeID]])
+            } catch {reply(["error":op=="vaultNew" ? "Укажите уникальное название до 80 символов" : "Не удалось открыть или переместить хранилище. Проверьте доступ и закройте другие окна KeyKeep."])}
+            return
         }
         #if UI_TEST
         if op == "testTouchPreflight" {
@@ -290,7 +346,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             return
         }
         if op == "bioStatus" {
-            reply(["value":["available":fingerprint.available,"enabled":fingerprint.enabled,"autoPrompt":fingerprint.enabled && (UserDefaults.standard.object(forKey:"bioAutoPrompt") as? Bool ?? true)]])
+            reply(["value":["available":fingerprint.available,"enabled":fingerprint.enabled,"autoPrompt":fingerprint.enabled && (UserDefaults.standard.object(forKey:self.bioPreference) as? Bool ?? true)]])
             return
         }
         if op == "setBioAutoPrompt" {
@@ -298,7 +354,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                   let state=core(["op":"status"])["value"] as? [String:Any], state["open"] as? Bool == true else {
                 reply(["error":"Откройте хранилище и включите Touch ID"]); return
             }
-            UserDefaults.standard.set(value,forKey:"bioAutoPrompt")
+            UserDefaults.standard.set(value,forKey:self.bioPreference)
             reply(["value":NSNull()]); return
         }
         if op == "lock" { prompt?.invalidate(); prompt = nil }
@@ -327,7 +383,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                     do {
                         if op == "bioEnable", let pin = args["currentPin"] as? String {
                             try self.fingerprint.enroll(pin: pin, context: ctx)
-                            UserDefaults.standard.set(true,forKey:"bioAutoPrompt")
+                            UserDefaults.standard.set(true,forKey:self.bioPreference)
                             reply(["value":NSNull()])
                         } else {
                             let pin = try self.fingerprint.recover(context: ctx)
