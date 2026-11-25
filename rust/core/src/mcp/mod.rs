@@ -1,4 +1,5 @@
 //! MCP access is explicit, session-scoped and mediated by the unlocked vault UI.
+mod demo;
 mod transport;
 use crate::{
     legacy::{Entry, Vault},
@@ -63,6 +64,7 @@ fn tools() -> Value {
     json!({"tools":[
         {"name":"list_vault_structure","description":"Список папок и записей с логинами и датами изменения, без паролей.","inputSchema":{"type":"object","properties":{}}},
         {"name":"get_password_entry","description":"Чтение выбранной записи, включая пароль, после вашего подтверждения.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
+        {"name":demo::TOOL,"description":demo::DESCRIPTION,"inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
         {"name":"upsert_password_entry","description":"Создание или изменение записи с вашим подтверждением. Требуется разрешить запросы на запись.","inputSchema":{"type":"object","properties":fields,"required":["title","username","password"]}}
     ]})
 }
@@ -83,7 +85,7 @@ impl Server {
         match &self.approval {
             None => Value::Null,
             Some(a) => {
-                json!({"key":a.key.to_string(),"title":a.title,"previousTitle":a.original.as_ref().map(|e|&e.values.title),"action":if !a.write{"read"}else if a.original.is_some(){"update"}else{"create"}})
+                json!({"key":a.key.to_string(),"title":a.title,"previousTitle":a.original.as_ref().map(|e|&e.values.title),"action":if a.request.message["params"]["name"] == demo::TOOL {"demo"}else if !a.write{"read"}else if a.original.is_some(){"update"}else{"create"}})
             }
         }
     }
@@ -121,8 +123,13 @@ impl Server {
                 let original = args["id"]
                     .as_str()
                     .and_then(|id| v.entries.iter().find(|e| e.id == id));
-                let write = params["name"] == "upsert_password_entry";
-                let title = if write
+                let demo = params["name"] == demo::TOOL;
+                let write = params["name"] == "upsert_password_entry" || demo;
+                let title = if demo {
+                    (self.writable
+                        && (args.is_null() || args.as_object().is_some_and(|a| a.is_empty())))
+                    .then_some(demo::DESCRIPTION)
+                } else if write
                     && self.writable
                     && ["title", "username", "password"]
                         .iter()
@@ -246,6 +253,18 @@ impl Session {
                     Err(error("Запись изменилась. Повторите запрос"))
                 } else if !a.write {
                     Ok(tool_result(json!(old)))
+                } else if server.writable && a.request.message["params"]["name"] == demo::TOOL {
+                    demo::populate(v)
+                        .and_then(|next| {
+                            self.write(&next, pin)?;
+                            Ok(next)
+                        })
+                        .map(|next| {
+                            self.unlocked.as_mut().unwrap().1 = next;
+                            changed = true;
+                            tool_result(json!({"folders":10,"subfolders":30,"entries":540}))
+                        })
+                        .map_err(error)
                 } else if server.writable {
                     let mut values = old.map(|e| json!(e.values)).unwrap_or_else(|| json!({}));
                     for field in [

@@ -28,6 +28,10 @@ async function pollMcp(generation){
       const read=request.action==='read';
       el('mcpAction').textContent=read?'Передать запись клиенту MCP?':request.action==='update'?'Изменить запись по запросу MCP?':'Создать запись по запросу MCP?';
       el('mcpDetails').textContent=read?'Клиент получит запись «'+request.title+'», включая пароль, дополнительные поля и историю.':request.action==='update'?'Клиент обновит «'+request.previousTitle+'». Название после сохранения: «'+request.title+'».':'Клиент добавит «'+request.title+'» в хранилище.';
+      if(request.action==='demo'){
+        el('mcpAction').textContent='Создать тестовый набор?';
+        el('mcpDetails').textContent=request.title;
+      }
       if(!el('mcpApproval').open)el('mcpApproval').showModal();
       el('mcpDeny').focus();
     }

@@ -95,6 +95,49 @@ fn loopback_approval_modes_rotation_and_lock() {
         true
     );
     assert_eq!(s.unlocked.as_ref().unwrap().1.entries[0].history.len(), 1);
+    let demo = tool(demo::TOOL, json!({}));
+    assert!(
+        pump(&mut s, port, &token, demo.clone(), Some(false))
+            .1
+            .get("error")
+            .is_some()
+    );
+    assert_eq!(
+        pump(&mut s, port, &token, demo.clone(), Some(true)).1["result"]["structuredContent"]["entries"],
+        540
+    );
+    assert!(
+        pump(&mut s, port, &token, demo, Some(true))
+            .1
+            .get("error")
+            .is_some()
+    );
+    let structure = pump(&mut s, port, &token, list.clone(), None).1;
+    let data = &structure["result"]["structuredContent"];
+    let folders = data["folders"].as_array().unwrap();
+    let entries = data["entries"].as_array().unwrap();
+    let parents: Vec<_> = folders
+        .iter()
+        .filter(|f| f["name"].as_str().unwrap().starts_with("Демо · "))
+        .collect();
+    assert_eq!(parents.len(), 10);
+    for parent in parents {
+        let children: Vec<_> = folders
+            .iter()
+            .filter(|f| f["parentId"] == parent["id"])
+            .collect();
+        assert_eq!(children.len(), 3);
+        for child in children {
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|e| e["folderId"] == child["id"])
+                    .count(),
+                18
+            );
+        }
+    }
+    assert_eq!(entries.len(), 541);
     s.call(op("mcpRotate")).unwrap();
     s.call(op("mcpStart")).unwrap();
     assert_eq!(pump(&mut s, port, &token, list, None).0, 401);
@@ -146,7 +189,7 @@ async def run():
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.list_tools()
-            assert {t.name for t in result.tools} == {"list_vault_structure","get_password_entry","upsert_password_entry"}
+            assert {t.name for t in result.tools} == {"list_vault_structure","get_password_entry","upsert_password_entry","create_demo_dataset"}
             data = await session.call_tool("list_vault_structure", {})
             assert data.structuredContent["entries"] == []
 asyncio.run(run())
