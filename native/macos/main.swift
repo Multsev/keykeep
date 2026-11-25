@@ -230,6 +230,11 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         }
         if activeID == VaultCatalog.empty && ["create","createFromFile","createFromKdbx"].contains(op) {reply(["error":"Выберите имя и расположение файла"]);return}
         if let origin=args["vaultContext"] as? String, origin != activeID {reply(["error":"Выбрано другое хранилище"]);return}
+        if op=="collapsedFolders" {
+            let key="collapsedFolders."+activeID
+            if let ids=args["ids"] as? [String] {UserDefaults.standard.set(ids,forKey:key)}
+            reply(["value":UserDefaults.standard.stringArray(forKey:key) ?? []]);return
+        }
         if op=="mcpPreference" {
             if let enabled=args["enabled"] as? Bool {
                 let state=core(["op":"status"])["value"] as? [String:Any]

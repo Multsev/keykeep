@@ -503,6 +503,41 @@ impl Session {
                 self.unlocked.as_mut().unwrap().1 = next;
                 Ok(Value::Null)
             }
+            "moveItem" => {
+                let id = arg("id")?;
+                let to = arg("to")?;
+                let from = arg("from")?;
+                if !v.folders.iter().any(|f| f.id == to) {
+                    return Err("Папка назначения отсутствует");
+                }
+                let mut next = v.clone();
+                match arg("kind")? {
+                    "folder" => {
+                        if v.subtree(id)?.contains(to) {
+                            return Err("Нельзя перенести папку внутрь себя");
+                        }
+                        let item = next
+                            .folders
+                            .iter_mut()
+                            .find(|f| f.id == id && f.parent_id == from)
+                            .ok_or("Папка уже изменилась")?;
+                        item.parent_id = to.to_owned();
+                    }
+                    "entry" => {
+                        let item = next
+                            .entries
+                            .iter_mut()
+                            .find(|e| e.id == id && e.values.folder_id == from)
+                            .ok_or("Запись уже изменилась")?;
+                        item.values.folder_id = to.to_owned();
+                        item.updated_at = arg("time")?.to_owned();
+                    }
+                    _ => return Err("Некорректный запрос"),
+                }
+                self.write(&next, pin)?;
+                self.unlocked.as_mut().unwrap().1 = next;
+                Ok(Value::Null)
+            }
             "deleteEntry" => {
                 let id = arg("id")?;
                 if r["confirmed"] != true {

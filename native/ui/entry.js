@@ -40,7 +40,7 @@ function clearEntryExtras() {
   for (const id of ['customList', 'revisions']) setChildren(el(id));
   el('custom').open = el('history').open = false;
   el('password').type = 'password';
-  el('revealPassword').textContent = 'Показать пароль';
+  setPasswordLabel(false);
 }
 
 function appendField(field) {
@@ -130,4 +130,10 @@ function renderEntryExtras(item) {
   const history=item.history||[];
   el('history').hidden=!history.length;
   setChildren(el('revisions'), ...history.slice().reverse().map(renderRevision));
+}
+
+function setPasswordLabel(shown){
+  const label=shown?'Скрыть пароль':'Показать пароль',button=el('revealPassword');
+  if(button.classList.contains('card-icon')){button.title=label;button.setAttribute('aria-label',label);button.setAttribute('aria-pressed',String(shown));}
+  else button.textContent=label;
 }

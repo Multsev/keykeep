@@ -47,6 +47,7 @@ function maybePromptFingerprint(){
 window.addEventListener('focus',maybePromptFingerprint);
 document.addEventListener('visibilitychange',maybePromptFingerprint);
 async function reset(promptOnOpen=false) {
+  resetTreeTools();
   hideUndo();
   if(window.clearMcp)window.clearMcp();
   pendingAutoUnlock=false;
@@ -92,10 +93,10 @@ const workspaces=new Map();
 function captureWorkspace(){
   let editor=null;
   if(current && !el('editor').hidden){
-    editor={...current,customFields:collectFields(),folderId:el('entryFolder').value};
+    editor={...current,customFields:collectFields(),folderId:window.KeyKeep && current.id?el('entryFolder').value:current.folderId};
     for(const key of keys)editor[key]=el(key).value;
   }
-  return {folder,query:el('search').value,editor,screen:document.body.dataset.screen};
+  rememberDraft();return {drafts:[...draftMap],folder,query:el('search').value,editor,screen:document.body.dataset.screen};
 }
 function setDrawer(open){
   if(!open)closeCatalogMenu();
@@ -210,7 +211,8 @@ async function refresh() {
   const query=el('search').value.trim();
   const data = await call('list',{folder,query});
   if (revision !== listing) return;
-  el('folderActions').hidden=folder==='root';
+  el('folderActions').hidden=!window.KeyKeep || folder==='root';
+  folderIndex=new Map(data.folders.map(f=>[f.id,f]));
   const tree = [];
   const options = [];
   const children = new Map();
@@ -225,10 +227,12 @@ async function refresh() {
     if(query)paths.set(f.id,path);
     options.push(new Option('　'.repeat(depth) + f.name, f.id));
     const subfolders=children.get(f.id) || [];
-    const button=row('　'.repeat(depth) + f.name,async () => {folder=f.id;current=null;el('editor').hidden=true;screen('entries');await refresh();},folder===f.id);
+    const button=row((window.KeyKeep?'　'.repeat(depth):'') + f.name,async () => {rememberDraft();folder=f.id;current=null;el('editor').hidden=true;screen('entries');await refresh();},folder===f.id);
     const count=document.createElement('small');
     count.textContent='Папок: '+subfolders.length+' · Записей: '+(data.entryCounts[f.id] || 0);
-    button.dataset.folder=f.id;button.append(count);tree.push(button);
+    button.dataset.folder=f.id;
+    if(window.KeyKeep){button.append(count);tree.push(button);}
+    else tree.push(treeLine(f,button,depth,subfolders.length,f.id==='root'?Object.values(data.entryCounts).reduce((a,b)=>a+b,0):data.entryCounts[f.id]));
     subfolders.sort((a,b)=>a.name.localeCompare(b.name,'ru')).forEach(c=>append(c,depth+1,path));
   }
   append(data.folders.find(f=>f.id==='root'),0);
@@ -236,20 +240,27 @@ async function refresh() {
   setChildren(el('entryFolder'), ...options);
   el('entryFolder').value = selectedFolder || folder;
   setChildren(el('tree'), ...tree);
+  if(!window.KeyKeep)paintBranches();
   el('entriesEmpty').textContent=query?'Ничего не найдено':'Пока нет записей';
   el('entriesEmpty').hidden=Boolean(data.entries.length);
   setChildren(el('rows'), ...data.entries.map(e=>{
-    const b=row(e.title,async()=>{edit(await call('get',{id:e.id}));await refresh();},current && current.id===e.id);
+    const b=row(e.title,async()=>{rememberDraft();edit(await call('get',{id:e.id}));await refresh();},current && current.id===e.id);
+    b.dataset.folder=e.folderId;b.dataset.entry=e.id;
+    if(!window.KeyKeep)makeDraggable(b,{kind:'entry',id:e.id,from:e.folderId});
     const sub=document.createElement('small');sub.textContent=query?[paths.get(e.folderId),e.username].filter(Boolean).join(' · '):e.username;b.append(sub);return b;
   }));
+  if(!window.KeyKeep)paintDraft();
 }
 function edit(item={id:'',folderId:folder,customFields:[]}) {
+  el('entryFolderLabel').hidden=!window.KeyKeep || !item.id;
   el('deleteEntry').hidden=!item.id;
   renderEntryExtras(item);
   el('entryFolder').value=item.folderId;
   current=item;for(const k of keys) el(k).value=item[k]||'';
   updateSiteButton();
-  el('editor').hidden=false; screen('detail');if (!item.id) el('title').focus();
+  el('editor').hidden=false;
+  if(!window.KeyKeep)setupCard(item);
+  screen('detail');if (!item.id) el('title').focus();
 }
 function updateStartupAction(){
   el('enter').textContent=exists?'Открыть':el('startupExchange').open?'Импортировать и открыть':'Создать хранилище';
@@ -271,8 +282,9 @@ async function showEntries(){
   let previous;
   if(!window.KeyKeep){
     setDrawer(false);await refreshCatalog();el('searchToggle').focus();
+    folded=new Set(await collapsedFolders());
     previous=workspaces.get(activeVaultId);workspaces.delete(activeVaultId);
-    if(previous){folder=previous.folder;el('search').value=previous.query;}
+    if(previous){draftMap=new Map(previous.drafts);folder=previous.folder;el('search').value=previous.query;}
     setSearchOpen(Boolean(el('search').value));
   }
   await refresh();
@@ -365,15 +377,21 @@ on('bioUnlock','click',async()=>{
   finally{el('bioUnlock').disabled=false;}
   await finishLogin();
 });
-on('newFolder','submit',async()=>{folder=await call('addFolder',{name:el('folderName').value,parent:el('folderCreateDialog').open?folderCreateParent:folder});el('folderCreateDialog').close();el('newFolder').reset();current=null;el('editor').hidden=true;screen('entries');await refresh();});
-on('add','click',()=>edit());
+on('newFolder','submit',async()=>{
+  const parent=el('folderCreateDialog').open?folderCreateParent:folder;
+  rememberDraft();folder=await call('addFolder',{name:el('folderName').value,parent});
+  if(!window.KeyKeep)revealBranch(parent);
+  el('folderCreateDialog').close();el('newFolder').reset();current=null;el('editor').hidden=true;screen('entries');await refresh();
+});
+on('add','click',()=>openDraft(folder));
 on('editor','submit',async()=>{
-  const values={folderId:el('entryFolder').value,customFields:collectFields()};
+  const values={folderId:window.KeyKeep && current.id?el('entryFolder').value:current.folderId,customFields:collectFields()};
   for(const key of keys)values[key]=el(key).value;
   values.username=formatLogin(values.username);
   values.website=formatWebsite(values.website);
   values.title=values.title.trim();values.note=values.note.trim();
   const id=await call('save',{id:current.id,values,time:new Date().toISOString()});
+  if(!current.id)draftMap.delete(current.folderId);
   edit(await call('get',{id}));await refresh();
 });
 for(const id of ['website','note'])el(id).addEventListener('input',updateSiteButton);
@@ -384,7 +402,7 @@ on('openWebsite','click',async()=>{
 on('revealPassword','click',()=>{
   const reveal=el('password').type==='password';
   el('password').type=reveal?'text':'password';
-  el('revealPassword').textContent=reveal?'Скрыть пароль':'Показать пароль';
+  setPasswordLabel(reveal);
 });
 for(const [id,field] of [['copyPassword','password'],['copyUsername','username']]){
   on(id,'click',async()=>{await call('copyField',{text:el(field).value,protected:field==='password'});el('message').textContent=field==='password'?'Пароль скопирован':'Логин скопирован';});
@@ -396,12 +414,23 @@ on('search','input',async()=>{screen('entries');await refresh();});
 on('back','click',()=>screen(document.body.dataset.screen==='detail'?'entries':'folders'));
 document.addEventListener('keydown',e=>{
   if(el('vault').hidden)return;
-  if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(document.querySelector('dialog[open]'))return;if(e.key==='n')edit();else if(window.KeyKeep)el('search').focus();else setSearchOpen(true);}
+  if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(document.querySelector('dialog[open]'))return;if(e.key==='n')openDraft(folder);else if(window.KeyKeep)el('search').focus();else setSearchOpen(true);}
   const catalogRow=e.target.closest('.vault-row');
   if(catalogRow && ['ArrowUp','ArrowDown'].includes(e.key)){
     e.preventDefault();
     const next=e.key==='ArrowUp'?catalogRow.previousElementSibling:catalogRow.nextElementSibling;
     next?.querySelector('button').focus();
+    return;
+  }
+  const line=e.target.closest('.tree-line');
+  if(line && e.target.matches('button') && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+    e.preventDefault();
+    const id=line.dataset.folder,lines=Array.from(el('tree').children).filter(node=>!node.hidden);
+    if(e.key==='ArrowLeft' || e.key==='ArrowRight'){
+      const arrow=line.querySelector('.tree-arrow');
+      if(arrow && folded.has(id)===(e.key==='ArrowRight'))arrow.click();
+      else if(e.key==='ArrowLeft')lines.find(node=>node.dataset.folder===folderIndex.get(id)?.parentId)?.querySelector('.tree-name').focus();
+    }else lines[lines.indexOf(line)+(e.key==='ArrowUp'?-1:1)]?.querySelector('.tree-name').focus();
     return;
   }
   const b=e.target.closest('nav button');
@@ -469,13 +498,17 @@ on('folderForm','submit',async()=>{
   await call('editFolder',{id:folder,name:el('editFolderName').value,parent:el('editParent').value});
   el('folderDialog').close();await refresh();
 });
-on('deleteFolder','click',async()=>{
-  const id=folder, info=await call('folderInfo',{id});
-  requestDeletion('Удалить папку «'+info.folder.name+'»?', 'Папок к удалению: '+info.folders+'. Записей: '+info.entries+'.',async()=>{
+on('deleteFolder','click',()=>confirmFolderRemoval(folder));
+async function confirmFolderRemoval(id){
+  const info=await call('folderInfo',{id});
+  requestDeletion('Удалить папку «'+info.folder.name+'»?', 'Подпапок: '+(info.folders-1)+' · Записей: '+info.entries,async()=>{
     await call('deleteFolder',{id,confirmed:true});
-    el('folderDialog').close();current=null;folder='root';el('editor').hidden=true;screen('folders');await refresh();
+    for(const key of draftMap.keys())if(ancestors(key).includes(id))draftMap.delete(key);
+    if(current && ancestors(current.folderId).includes(id)){current=null;el('editor').hidden=true;}
+    if(ancestors(folder).includes(id)){folder=info.folder.parentId;screen('folders');}
+    el('folderDialog').close();await refresh();
   });
-});
+}
 function hideUndo(){
   clearTimeout(undoTimer);undoToken=null;el('undoNotice').hidden=true;
 }

@@ -88,7 +88,7 @@ public final class MainActivity extends Activity {
                 @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return true; }
                 @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                     String url = request.getUrl().toString();
-                    for (String file : new String[]{"index.html","app.css","app.js","entry.js","disk.js","mcp.js","catalog-menu.js","workspace-tools.js"}) {
+                    for (String file : new String[]{"index.html","app.css","app.js","entry.js","disk.js","mcp.js","catalog-menu.js","workspace-tools.js","folder-tree.js"}) {
                         if (!url.equals(ORIGIN+file)) continue;
                         try {
                             String type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "text/html";
