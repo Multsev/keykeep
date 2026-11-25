@@ -85,6 +85,13 @@ if(benchCount>0){
   const writeTiming='PASS MCP '+benchCount+' sequential writes '+Math.round(performance.now()-start)+' ms';
   const readback=(await rpc('list_vault_structure',{})).result.structuredContent;
   if(readback.entries.filter(e=>e.folderId===parent).length!==benchCount)throw Error('benchmark count');
+  const child=(await rpc('create_folder',{name:'Child',parentId:parent})).result.structuredContent.id;
+  const id=(await rpc('create_password_entry',{title:'Nested',username:'demo',password:'test-only',folderId:child})).result.structuredContent.id;
+  await refresh();edit(await call('get',{id}));
+  const prefix='Все записи › Latency fixture › Child › ';
+  if(el('entryPath').textContent!==prefix+'Nested')throw Error('nested entry path');
+  el('title').value='Renamed';el('title').dispatchEvent(new Event('input'));
+  if(el('entryPath').textContent!==prefix+'Renamed')throw Error('edited entry path');
   return writeTiming;
 }
 if(getComputedStyle(el('detail')).display!=='none' || el('entriesEmpty').hidden || !el('search').hidden)throw Error('empty workspace layout');

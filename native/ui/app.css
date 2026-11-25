@@ -191,3 +191,5 @@ dialog{max-height:85dvh}
 .deleted-row small{display:block;color:var(--muted)}
 .deleted-row button{flex:none}
 @media(min-width:661px){.view-trash .panes{grid-template-columns:minmax(0,21%) minmax(0,1fr)}}
+
+#entryPath{margin:0;color:var(--muted);font-size:.85rem;line-height:1.35;overflow-wrap:anywhere;user-select:text}

@@ -54,7 +54,7 @@ async function reset(promptOnOpen=false) {
   pendingAutoUnlock=false;
   closeSettings();
   el('generalDialog').close();el('folderCreateDialog').close();
-  clearEntryExtras();
+  clearEntryExtras();el('entryPath').textContent='';
   el('folderDialog').close();
   el('confirmDeletion').close();
   closeCatalogMenu();
@@ -242,6 +242,7 @@ async function refresh() {
   const selectedFolder = el('entryFolder').value;
   setChildren(el('entryFolder'), ...options);
   el('entryFolder').value = selectedFolder || folder;
+  updateEntryPath();
   setChildren(el('tree'), ...tree);
   if(!window.KeyKeep)paintBranches();
   if(trashSelected){renderDeleted(deleted,query);return;}
@@ -255,13 +256,22 @@ async function refresh() {
   }));
   if(!window.KeyKeep)paintDraft();
 }
+function updateEntryPath(){
+  if(!current){el('entryPath').textContent='';return;}
+  const id=window.KeyKeep && current.id?el('entryFolder').value:current.folderId;
+  const parts=ancestors(id).reverse().map(key=>folderIndex.get(key).name);
+  parts.push(el('title').value.trim() || 'Новая запись');
+  el('entryPath').textContent=parts.join(' › ');
+}
+el('title').addEventListener('input',updateEntryPath);
+el('entryFolder').addEventListener('change',updateEntryPath);
 function edit(item={id:'',folderId:folder,customFields:[]}) {
   el('entryFolderLabel').hidden=!window.KeyKeep || !item.id;
   el('deleteEntry').hidden=!item.id;
   renderEntryExtras(item);
   el('entryFolder').value=item.folderId;
   current=item;for(const k of keys) el(k).value=item[k]||'';
-  updateSiteButton();
+  updateSiteButton();updateEntryPath();
   el('editor').hidden=false;
   if(!window.KeyKeep)setupCard(item);
   screen('detail');if (!item.id) el('title').focus();
