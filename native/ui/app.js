@@ -23,7 +23,7 @@ function androidRequest(request) {
   });
 }
 async function call(op, args = {}) {
-  const request = JSON.stringify({op,...args});
+  const request = JSON.stringify({op,...args,...(window.KeyKeep?{}:{vaultContext:activeVaultId})});
   const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.vault;
   const reply = bridge ? await bridge.postMessage(request) : await androidRequest(request);
   const result = JSON.parse(reply);
@@ -62,8 +62,13 @@ async function reset(promptOnOpen=false) {
   el('search').value = ''; el('message').textContent = '';
   setChildren(el('tree')); setChildren(el('rows')); current = null; folder = 'root';
   el('editor').hidden = true; el('vault').hidden = true; el('gate').hidden = false;
-  exists = (await call('status')).exists;
-  if(!window.KeyKeep){el('allVaults').hidden=false;await refreshCatalog();}
+  const status=await call('status');
+  exists=status.exists;
+  if(!window.KeyKeep)await refreshCatalog();
+  if(!window.KeyKeep){
+    if(status.open){await showEntries();return;}
+    setDrawer(true);
+  }
   el('repeatLabel').hidden = exists; el('startupExchange').hidden = exists;
   el('startupExchange').open=false; updateStartupAction();
   if(!exists) await refreshStartupFiles();
@@ -73,52 +78,81 @@ async function reset(promptOnOpen=false) {
   pendingAutoUnlock=promptOnOpen && !el('bioUnlock').hidden && bio.autoPrompt;
   maybePromptFingerprint();
 }
-let trashCandidate=null;
+let selectedVault, activeVaultId, rememberWorkspace=false, catalogBusy=false;
+const workspaces=new Map();
+function captureWorkspace(){
+  let editor=null;
+  if(current && !el('editor').hidden){
+    editor={...current,customFields:collectFields(),folderId:el('entryFolder').value};
+    for(const key of keys)editor[key]=el(key).value;
+  }
+  return {folder,query:el('search').value,editor,screen:document.body.dataset.screen};
+}
+function setDrawer(open){
+  document.body.classList.toggle('drawer-open',open);
+  el('toggleCatalog').setAttribute('aria-expanded',String(open));
+  el('vaultCatalog').inert=!open;
+}
+on('revealVaultFile','click',()=>call('vaultRevealFile'));
+el('toggleCatalog').onclick=()=>setDrawer(!document.body.classList.contains('drawer-open'));
 async function refreshCatalog(){
   const data=await call('vaultCatalog');
-  const selected=data.items.find(v=>v.id===data.active);
-  el('activeVaultName').textContent=selected?selected.name:'';
-  el('activeVaultName').hidden=!selected;
-  const rows=data.items.map(v=>{
-    const line=document.createElement('div');line.className='field-actions';
-    const select=actionButton(v.name,()=>catalogAction(async()=>{
-      await call('vaultSelect',{id:v.id});el('vaultCatalog').close();await reset();
-    }));
-    const remove=actionButton('Удалить',()=>{
-      trashCandidate=v.id;
-      el('trashText').textContent='Переместить хранилище «'+v.name+'» со всеми его локальными записями в Корзину Mac?';
-      el('trashQuestion').hidden=false;el('trashCancel').focus();
+  document.body.classList.add('mac-vaults');
+  el('vaultCatalog').hidden=false;
+  activeVaultId=data.active;rememberWorkspace=data.remembered;
+  el('workspaceBar').hidden=el('vaultLocation').hidden=el('rememberLabel').hidden=false;
+  el('vaultPath').textContent=data.file;
+  el('revealVaultFile').title='Показать в Finder: '+data.file;
+  selectedVault=data.items.find(v=>v.id===data.active);
+  el('revealVaultFile').disabled=!selectedVault;
+  if(!selectedVault){
+    el('vaultPath').textContent='Выберите расположение при создании';
+    el('revealVaultFile').title='';
+  }
+  el('activeVaultName').textContent=selectedVault?selectedVault.name:'Основное';
+  el('workspaceTitle').textContent=el('activeVaultName').textContent;
+  const items=data.items.slice();
+  if(!selectedVault)items.unshift({id:data.active,name:'Основное'});
+  setChildren(el('catalogRows'),...items.map(v=>{
+    const select=actionButton(v.name,()=>{
+      if(data.active===v.id){if(!el('gate').hidden)el('pin').focus();return;}
+      return changeVault('vaultSelect',{id:v.id});
     });
-    remove.setAttribute('aria-label','Удалить хранилище '+v.name);
-    line.append(select,remove);return line;
-  });
-  if(!rows.length)rows.push(document.createTextNode('Пока нет локальных хранилищ.'));
-  setChildren(el('catalogRows'),...rows);
-  trashCandidate=null;el('trashQuestion').hidden=true;
+    select.title=v.file || v.name;
+    select.setAttribute('aria-current',String(data.active===v.id));
+    return select;
+  }));
+  el('catalogRemove').hidden=!selectedVault;
+  el('trashQuestion').hidden=true;
 }
-async function catalogAction(action){
+async function changeVault(op,args){
+  if(catalogBusy)return;
+  catalogBusy=true;
+  el('vaultCatalog').inert=true;
   el('catalogMessage').textContent='';
-  try{await action();}catch(e){el('catalogMessage').textContent=e.message;}
+  try{
+    pendingAutoUnlock=false;
+    if(diskBusy)throw Error('Дождитесь завершения синхронизации');
+    const origin=activeVaultId;
+    const workspace=rememberWorkspace && op!=='vaultTrash'?captureWorkspace():null;
+    const switched=await call(op,args);
+    if(switched.cancelled)return;
+    if(workspace)workspaces.set(origin,workspace);else workspaces.delete(origin);
+    activeVaultId=switched.active;
+    await reset();
+  }catch(e){el('catalogMessage').textContent=e.message;}
+  finally{catalogBusy=false;el('vaultCatalog').inert=!document.body.classList.contains('drawer-open');if(!el('gate').hidden)el('pin').focus();}
 }
-el('allVaults').onclick=()=>catalogAction(async()=>{
-  pendingAutoUnlock=false;
-  el('pin').value=el('repeat').value='';
-  el('message').textContent='';el('catalogName').value='';
-  el('vaultCatalog').showModal();await refreshCatalog();
-});
-el('catalogClose').onclick=()=>el('vaultCatalog').close();
-el('catalogNew').onsubmit=e=>{
-  e.preventDefault();
-  catalogAction(async()=>{
-    await call('vaultNew',{name:el('catalogName').value});
-    el('vaultCatalog').close();await reset();
-  });
+el('catalogAdd').onclick=()=>changeVault('vaultNew',{});
+el('catalogRemove').onclick=()=>{
+  if(!selectedVault)return;
+  el('trashText').textContent='Переместить «'+selectedVault.name+'» со всеми записями в Корзину Mac?';
+  el('trashQuestion').hidden=false;el('trashCancel').focus();
 };
-el('trashCancel').onclick=()=>{trashCandidate=null;el('trashQuestion').hidden=true;};
-el('trashConfirm').onclick=()=>catalogAction(async()=>{
-  if(!trashCandidate)return;
-  await call('vaultTrash',{id:trashCandidate,confirmed:true});await reset();
-});
+el('trashCancel').onclick=()=>{el('trashQuestion').hidden=true;el('catalogRemove').focus();};
+el('trashConfirm').onclick=()=>{
+  if(selectedVault)changeVault('vaultTrash',{id:selectedVault.id,confirmed:true});
+};
 function row(label, action, selected) {
   const b = document.createElement('button'); b.textContent = label; b.title = label;
   b.setAttribute('aria-current',String(selected));
@@ -184,19 +218,42 @@ el('startupExchange').addEventListener('toggle',updateStartupAction);
 for(const [id,op] of [['startupDb','pickDatabase'],['startupKey','pickKeyfile'],['startupClear','clearExchange']]){
   on(id,'click',async()=>{await call(op);await refreshStartupFiles();});
 }
+async function showEntries(){
+  el('gate').hidden=true;el('vault').hidden=false;screen('folders');
+  let previous;
+  if(!window.KeyKeep){
+    setDrawer(false);await refreshCatalog();el('search').focus();
+    previous=workspaces.get(activeVaultId);workspaces.delete(activeVaultId);
+    if(previous){folder=previous.folder;el('search').value=previous.query;}
+  }
+  await refresh();
+  if(previous){if(previous.editor)edit(previous.editor);screen(previous.screen);}
+  await window.keykeepOAuthReady();await retryOnUnlock();
+}
+async function finishLogin(){
+  if(!window.KeyKeep)await call('vaultRemember',{enabled:el('rememberVault').checked});
+  el('access').reset();
+  await showEntries();
+}
 on('access','submit',async()=>{
   pendingAutoUnlock=false;
   const pin=el('pin').value;
   if (!exists && el('repeat').value!==pin) throw new Error('PIN не совпадает');
+  if(!exists && el('startupExchange').open && !el('startupDbName').textContent)throw Error('Выберите файл KDBX');
+  if(!exists && !window.KeyKeep && !selectedVault){
+    if(Array.from(pin).length<6)throw Error('Введите минимум 6 символов');
+    const chosen=await call('vaultNew',{initial:true});
+    if(chosen.cancelled)return;
+    activeVaultId=chosen.active;
+    await refreshCatalog();
+  }
   if(!exists && el('startupExchange').open){
-    if(!el('startupDbName').textContent)throw Error('Выберите файл KDBX');
     await call('createFromFile',{pin,password:el('startupPassword').value});
   }else{
     await call(exists?'unlock':'create',{pin});
     if(!exists)await call('clearExchange');
   }
-  el('access').reset();
-  el('gate').hidden=true;el('vault').hidden=false;screen('folders');await refresh();await window.keykeepOAuthReady();await retryOnUnlock();
+  await finishLogin();
 });
 let bioState = {}, hideTimer;
 async function biometricStatus() {
@@ -252,7 +309,7 @@ on('bioUnlock','click',async()=>{
   try{await call('bioUnlock');}
   catch(error){el('pin').focus();throw error;}
   finally{el('bioUnlock').disabled=false;}
-  el('access').reset();el('gate').hidden=true;el('vault').hidden=false;screen('folders');await refresh();await window.keykeepOAuthReady();await retryOnUnlock();
+  await finishLogin();
 });
 on('newFolder','submit',async()=>{folder=await call('addFolder',{name:el('folderName').value,parent:folder});el('newFolder').reset();screen('entries');await refresh();});
 on('add','click',()=>edit());
@@ -280,7 +337,7 @@ for(const [id,field] of [['copyPassword','password'],['copyUsername','username']
 }
 on('addField','click',()=>appendField({name:'',value:'',type:'text'}));
 on('generate','click',async()=>{el('password').value=await call('generate');});
-on('lock','click',async()=>{await call('lock');await reset();});
+on('lock','click',async()=>{workspaces.clear();await call('lock');await reset();});
 on('search','input',async()=>{screen('entries');await refresh();});
 on('back','click',()=>screen(document.body.dataset.screen==='detail'?'entries':'folders'));
 document.addEventListener('keydown',e=>{

@@ -63,11 +63,23 @@ pub fn open(bytes: &[u8], pin: &str, device: &[u8; 32]) -> Result<Vault, &'stati
 
 /// Callers serialize writes and only publish their in-memory revision after success.
 pub fn persist(path: &Path, ciphertext: &[u8]) -> std::io::Result<()> {
+    persist_file(path, ciphertext, true)
+}
+
+pub fn persist_new(path: &Path, ciphertext: &[u8]) -> std::io::Result<()> {
+    persist_file(path, ciphertext, false)
+}
+
+fn persist_file(path: &Path, ciphertext: &[u8], replace: bool) -> std::io::Result<()> {
     let dir = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(ciphertext)?;
     tmp.as_file().sync_all()?;
-    tmp.persist(path)?;
+    if replace {
+        tmp.persist(path)?;
+    } else {
+        tmp.persist_noclobber(path)?;
+    }
     std::fs::File::open(dir)?.sync_all()
 }
 

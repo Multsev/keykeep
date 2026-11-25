@@ -89,6 +89,13 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(lock), name: Notification.Name("com.apple.screenIsLocked"), object: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+    private var parked = [String: UnsafeMutableRawPointer]()
+    private var rememberActive = false
+    private func forgetSessions() {
+        rememberActive = false
+        for handle in parked.values { kk_close(handle) }
+        parked.removeAll()
+    }
     var catalog: VaultCatalog!
     var activeID = VaultCatalog.original
     var bioPreference:String { activeID == VaultCatalog.original ? "bioAutoPrompt" : "bioAutoPrompt."+activeID }
@@ -97,13 +104,14 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         if session != nil && activeID == id {return}
         let dir = try catalog.directory(id)
         try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
-        let file = dir.appendingPathComponent("vault.kk")
-        guard let next=kk_new(file.path) else {throw PlatformFailure()}
+        let file = try catalog.file(id)
+        let cached=parked.removeValue(forKey:id)
+        guard let next=cached ?? kk_new_at(file.path,dir.appendingPathComponent("vault.kk").path) else {throw PlatformFailure()}
         let old=session, oldID=activeID, oldFingerprint=fingerprint
         session=next;activeID=id;fingerprint=Fingerprint(file:dir.appendingPathComponent("touch-id.credential"))
         do {
             if kk_erasing(next) {try finishErasure()}
-            else {
+            else if cached == nil {
                 #if UI_TEST
                 let key=Data(repeating:61,count:32)
                 #else
@@ -114,7 +122,10 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         } catch {
             kk_close(next);session=old;activeID=oldID;fingerprint=oldFingerprint;throw error
         }
-        if let old {kk_close(old)}
+        if let old {
+            if rememberActive {parked[oldID]=old} else {kk_close(old)}
+        }
+        rememberActive=cached != nil
         prompt?.invalidate();prompt=nil;importURL=nil;keyFileURL=nil;oauthCallback=nil
         #if !UI_TEST
         UserDefaults.standard.set(id,forKey:"selectedVault")
@@ -122,6 +133,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         window?.title = "KeyKeep"
     }
     private func finishErasure() throws {
+        rememberActive=false
         prompt?.invalidate();prompt=nil;oauthCallback=nil;importURL=nil;keyFileURL=nil
         try fingerprint.disable()
         #if UI_TEST
@@ -130,12 +142,13 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         UserDefaults.standard.removeObject(forKey:self.bioPreference)
         let status=SecItemDelete(deviceKeyQuery(activeID) as CFDictionary)
         guard status==errSecSuccess || status==errSecItemNotFound else {throw PlatformFailure()}
-        let key=try deviceKey(for:fingerprint.file.deletingLastPathComponent().appendingPathComponent("vault.kk"),account:activeID,replacing:true)
+        let key=try deviceKey(for:catalog.file(activeID),account:activeID,replacing:true)
         #endif
         guard key.withUnsafeBytes({ kk_finish_erasure(session,$0.bindMemory(to:UInt8.self).baseAddress) }) else {throw PlatformFailure()}
     }
     func applicationDidHide(_ notification: Notification) { lock() }
     @objc func lock() {
+        forgetSessions()
         guard let session = session else { return }
         prompt?.invalidate(); prompt = nil
         kk_free_text(kk_call(session, "{\"op\":\"lock\"}"))
@@ -149,7 +162,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         testStarted = true
         do {
             let test = try String(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("smoke.js"))
-            webView.callAsyncJavaScript(test, arguments: ["startupImport":importURL != nil], in: nil, in: .page) { result in
+            webView.callAsyncJavaScript(test, arguments: ["startupImport":importURL != nil,"checkFinder":ProcessInfo.processInfo.environment["KEYKEEP_TEST_FINDER"] == "1"], in: nil, in: .page) { result in
                 if let root = self.testRoot { try? FileManager.default.removeItem(at: root) }
                 switch result {
                 case .success(let value):
@@ -190,36 +203,79 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             defer { kk_free_text(answer) }
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
         }
-        if ["vaultCatalog","vaultSelect","vaultNew","vaultTrash"].contains(op) {
+        if let origin=args["vaultContext"] as? String, origin != activeID {reply(["error":"Выбрано другое хранилище"]);return}
+        if op=="vaultRevealFile" {
+            do {
+                let file=try catalog.file(activeID)
+                let dir=file.deletingLastPathComponent()
+                if FileManager.default.fileExists(atPath:file.path) {
+                    guard NSWorkspace.shared.selectFile(file.path,inFileViewerRootedAtPath:"") else {throw PlatformFailure()}
+                } else if !NSWorkspace.shared.open(dir) {throw PlatformFailure()}
+                reply(["value":NSNull()])
+            } catch {reply(["error":"Не удалось показать хранилище в Finder"])}
+            return
+        }
+        if op=="vaultRemember" {
             let state=core(["op":"status"])["value"] as? [String:Any]
-            guard state?["open"] as? Bool == false else {reply(["error":"Сначала заблокируйте хранилище"]);return}
+            rememberActive=state?["open"] as? Bool == true && args["enabled"] as? Bool == true
+            reply(["value":NSNull()]);return
+        }
+        if ["vaultCatalog","vaultSelect","vaultNew","vaultTrash"].contains(op) {
+            if op != "vaultCatalog" && op != "vaultNew" {
+                let readiness=core(["op":"suspendServices"])
+                if readiness["error"] != nil {reply(readiness);return}
+            }
             do {
                 if op == "vaultNew" {
-                    let id=try catalog.create(name:args["name"] as? String ?? "")
+                    let first=args["initial"] as? Bool == true
+                    let suggested=first ? "Основное" : "Новое хранилище"
+                    #if UI_TEST
+                    let folder=catalog.base.appendingPathComponent("Downloads")
+                    try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+                    let url=folder.appendingPathComponent((first ? suggested : "Проверка")+".kk")
+                    #else
+                    let panel=NSSavePanel()
+                    panel.title="Новое хранилище"
+                    panel.prompt="Выбрать"
+                    panel.nameFieldStringValue=suggested+".kk"
+                    panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data]
+                    panel.isExtensionHidden=false
+                    panel.canCreateDirectories=true
+                    panel.directoryURL=FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first
+                    guard panel.runModal() == .OK, let url=panel.url else {reply(["value":["cancelled":true]]);return}
+                    #endif
+                    guard !FileManager.default.fileExists(atPath:url.path) else {reply(["error":"Файл уже существует. Выберите другое имя."]);return}
+                    let readiness=core(["op":"suspendServices"])
+                    if readiness["error"] != nil {reply(readiness);return}
+                    let oldImport=importURL, oldKey=keyFileURL
+                    let id=try catalog.create(at:url)
                     try activateVault(id)
+                    if first {importURL=oldImport;keyFileURL=oldKey}
                 } else if op != "vaultCatalog" {
                     guard let id=args["id"] as? String,
                           try catalog.items().contains(where:{$0["id"]==id}) else {throw PlatformFailure()}
                     if op == "vaultSelect" {try activateVault(id)}
                     else {
-                        guard args["confirmed"] as? Bool == true else {throw PlatformFailure()}
+                        guard id==activeID, args["confirmed"] as? Bool == true else {throw PlatformFailure()}
                         let dir=try catalog.directory(id)
-                        let other=id != activeID ? kk_new(dir.appendingPathComponent("vault.kk").path) : nil
-                        guard id == activeID || other != nil else {throw PlatformFailure()}
-                        defer {if let other {kk_close(other)}}
-                        #if UI_TEST
-                        try FileManager.default.moveItem(at:dir,to:catalog.base.appendingPathComponent("trash-"+UUID().uuidString))
-                        #else
-                        try FileManager.default.trashItem(at:dir,resultingItemURL:nil)
-                        #endif
+                        let file=try catalog.file(id)
+                        var targets=[dir]
+                        if file != dir.appendingPathComponent("vault.kk"), FileManager.default.fileExists(atPath:file.path){targets.insert(file,at:0)}
+                        for url in targets {
+                            #if UI_TEST
+                            try FileManager.default.moveItem(at:url,to:catalog.base.appendingPathComponent("trash-"+UUID().uuidString))
+                            #else
+                            try FileManager.default.trashItem(at:url,resultingItemURL:nil)
+                            #endif
+                        }
                         if activeID==id {
-                            kk_close(session);session=nil
+                            rememberActive=false;kk_close(session);session=nil
                             try activateVault(try catalog.items().first?["id"] ?? VaultCatalog.original)
                         }
                     }
                 }
-                reply(["value":["items":try catalog.items(),"active":activeID]])
-            } catch {reply(["error":op=="vaultNew" ? "Укажите уникальное название до 80 символов" : "Не удалось открыть или переместить хранилище. Проверьте доступ и закройте другие окна KeyKeep."])}
+                reply(["value":["items":try catalog.items(),"active":activeID,"remembered":rememberActive,"file":try catalog.file(activeID).path]])
+            } catch {reply(["error":op=="vaultNew" ? "Выберите свободное имя файла и доступную для записи папку" : "Не удалось открыть или переместить хранилище. Проверьте доступ и закройте другие окна KeyKeep."])}
             return
         }
         #if UI_TEST
@@ -357,7 +413,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             UserDefaults.standard.set(value,forKey:self.bioPreference)
             reply(["value":NSNull()]); return
         }
-        if op == "lock" { prompt?.invalidate(); prompt = nil }
+        if op == "lock" { forgetSessions();prompt?.invalidate(); prompt = nil }
         if ["bioEnable","bioDisable","changePin"].contains(op) {
             let proof = core(["op":"verifyPin","currentPin":args["currentPin"] ?? ""])
             if proof["error"] != nil { reply(proof); return }
@@ -403,7 +459,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         reply(core(args))
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ note: Notification) { kk_close(session); session = nil }
+    func applicationWillTerminate(_ note: Notification) { forgetSessions();kk_close(session); session = nil }
 }
 
 let app = NSApplication.shared

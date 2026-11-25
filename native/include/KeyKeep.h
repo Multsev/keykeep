@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdint.h>
+void *kk_new_at(const char *path, const char *state);
 void *kk_new(const char *path);
 char *kk_call(void *session, const char *request);
 void kk_free_text(char *response);

@@ -22,6 +22,7 @@ pub struct Session {
     attempts: crate::attempts::Attempts,
     erasing: bool,
     path: PathBuf,
+    state_path: PathBuf,
     device: Zeroizing<[u8; 32]>,
     pub(crate) unlocked: Option<(Zeroizing<String>, Vault)>,
     // Exclude independent editing sessions across processes.
@@ -29,11 +30,18 @@ pub struct Session {
 }
 impl Session {
     pub fn new(path: PathBuf, device: [u8; 32]) -> Result<Self, &'static str> {
+        Self::with_state(path.clone(), path, device)
+    }
+    pub(crate) fn with_state(
+        path: PathBuf,
+        state_path: PathBuf,
+        device: [u8; 32],
+    ) -> Result<Self, &'static str> {
         let lock = fs::File::options()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(path.with_extension("lock"))
+            .open(state_path.with_extension("lock"))
             .map_err(|_| "Не удалось открыть каталог")?;
         // Rust std does not implement File::try_lock on every Android target.
         // Both supported operating systems provide flock; closing the descriptor releases it.
@@ -42,21 +50,34 @@ impl Session {
         }
         Ok(Self {
             deleted_entry: None,
-            erasing: path
+            erasing: state_path
                 .with_extension("erasing")
                 .try_exists()
                 .map_err(|_| "Ошибка доступа")?,
             mcp: None,
             cloud_job: None,
             restore_revision: None,
-            attempts: crate::attempts::Attempts::new(path.with_extension("attempts")),
+            attempts: crate::attempts::Attempts::new(state_path.with_extension("attempts")),
             path,
+            state_path,
             device: Zeroizing::new(device),
             unlocked: None,
             _lock: lock,
         })
     }
+    fn missing_external_file(&self) -> Result<bool, &'static str> {
+        Ok(self.path != self.state_path
+            && !self.path.try_exists().map_err(|_| "Ошибка доступа")?
+            && self
+                .state_path
+                .with_extension("created")
+                .try_exists()
+                .map_err(|_| "Ошибка доступа")?)
+    }
     pub(crate) fn write(&self, v: &Vault, pin: &str) -> Result<(), &'static str> {
+        if self.missing_external_file()? {
+            return Err("Файл хранилища отсутствует. Проверьте путь внизу окна");
+        }
         storage::persist(&self.path, &storage::seal(v, pin, &self.device)?)
             .map_err(|_| "Ошибка сохранения")
     }
@@ -132,21 +153,25 @@ impl Session {
             Err(_) => Err("Не удалось завершить удаление"),
         };
         for ext in [
+            "created",
             "before-import.kk",
             "before-restore.kk",
             "pending-upload.kdbx",
             "attempts",
         ] {
-            remove(&self.path.with_extension(ext))?;
+            remove(&self.state_path.with_extension(ext))?;
         }
         remove(&self.path)?;
         let dir = fs::File::open(self.path.parent().ok_or("Ошибка каталога")?)
             .map_err(|_| "Ошибка каталога")?;
         dir.sync_all().map_err(|_| "Ошибка сохранения")?;
-        remove(&self.path.with_extension("erasing"))?;
+        let state_dir = fs::File::open(self.state_path.parent().ok_or("Ошибка каталога")?)
+            .map_err(|_| "Ошибка каталога")?;
+        state_dir.sync_all().map_err(|_| "Ошибка сохранения")?;
+        remove(&self.state_path.with_extension("erasing"))?;
         self.device = Zeroizing::new(key);
         self.erasing = false;
-        dir.sync_all().map_err(|_| "Ошибка сохранения")
+        state_dir.sync_all().map_err(|_| "Ошибка сохранения")
     }
     fn keyfile(request: &Value) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         use base64::{Engine, engine::general_purpose::STANDARD};
@@ -192,8 +217,11 @@ impl Session {
                 return Err("Дождитесь завершения синхронизации");
             }
             self.call(json!({"op":"verifyPin","currentPin":arg("currentPin")?}))?;
-            storage::persist(&self.path.with_extension("erasing"), b"KeyKeep erasure v1")
-                .map_err(|_| "Не удалось начать удаление")?;
+            storage::persist(
+                &self.state_path.with_extension("erasing"),
+                b"KeyKeep erasure v1",
+            )
+            .map_err(|_| "Не удалось начать удаление")?;
             self.erasing = true;
             self.deleted_entry = None;
             self.unlocked = None;
@@ -208,15 +236,20 @@ impl Session {
         match op {
             "status" => {
                 return Ok(
-                    json!({"exists":self.path.try_exists().map_err(|_|"Ошибка доступа")?,"open":self.unlocked.is_some()}),
+                    json!({"exists":self.path.try_exists().map_err(|_|"Ошибка доступа")? || self.missing_external_file()?,"open":self.unlocked.is_some()}),
                 );
             }
-            "lock" => {
+            "lock" | "suspendServices" => {
+                if op == "suspendServices" && self.cloud_job.is_some() {
+                    return Err("Дождитесь завершения синхронизации");
+                }
                 self.cloud_job = None;
                 self.restore_revision = None;
                 self.mcp = None;
                 self.deleted_entry = None;
-                self.unlocked = None;
+                if op == "lock" {
+                    self.unlocked = None;
+                }
                 return Ok(Value::Null);
             }
             "migrateAndroid" => {
@@ -269,6 +302,9 @@ impl Session {
                 self.deleted_entry = None;
                 self.unlocked = None;
                 let pin = arg("pin")?;
+                if self.missing_external_file()? {
+                    return Err("Файл хранилища отсутствует. Проверьте путь внизу окна");
+                }
                 let vault = if op != "unlock" {
                     if self.path.try_exists().map_err(|_| "Ошибка доступа")? {
                         return Err("Хранилище уже существует");
@@ -286,7 +322,12 @@ impl Session {
                     } else {
                         Vault::from_android(None, None)?
                     };
-                    self.write(&v, pin)?;
+                    storage::persist_new(&self.path, &storage::seal(&v, pin, &self.device)?)
+                        .map_err(|_| "Не удалось создать файл. Проверьте имя и доступ к папке")?;
+                    if self.path != self.state_path {
+                        storage::persist(&self.state_path.with_extension("created"), b"1")
+                            .map_err(|_| "Ошибка сохранения расположения")?;
+                    }
                     v
                 } else {
                     let encrypted = fs::read(&self.path).map_err(|_| "Ошибка чтения")?;
@@ -340,12 +381,12 @@ impl Session {
                 self.mcp = None;
                 let backup =
                     fs::read(&self.path).map_err(|_| "Не удалось прочитать прежнюю базу")?;
-                storage::persist(&self.path.with_extension("before-import.kk"), &backup)
+                storage::persist(&self.state_path.with_extension("before-import.kk"), &backup)
                     .map_err(|_| "Не удалось сохранить снимок")?;
                 self.write(&next, pin)?;
                 self.deleted_entry = None;
                 self.unlocked.as_mut().unwrap().1 = next;
-                let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
+                let _ = fs::remove_file(self.state_path.with_extension("pending-upload.kdbx"));
                 Ok(Value::Null)
             }
             "verifyPin" | "changePin" => {
@@ -590,7 +631,8 @@ impl Session {
                         next.disk.upload = None;
                         self.write(&next, pin)?;
                         self.unlocked.as_mut().unwrap().1 = next;
-                        let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
+                        let _ =
+                            fs::remove_file(self.state_path.with_extension("pending-upload.kdbx"));
                     }
                     value
                 }
@@ -624,12 +666,15 @@ impl Session {
                     next.disk.upload = None;
                     next.mcp_token.clone_from(&v.mcp_token);
                     self.mcp = None;
-                    storage::persist(&self.path.with_extension("before-restore.kk"), &current)
-                        .map_err(|_| "Не удалось сохранить локальный снимок")?;
+                    storage::persist(
+                        &self.state_path.with_extension("before-restore.kk"),
+                        &current,
+                    )
+                    .map_err(|_| "Не удалось сохранить локальный снимок")?;
                     self.write(&next, pin)?;
                     self.deleted_entry = None;
                     self.unlocked.as_mut().unwrap().1 = next;
-                    let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
+                    let _ = fs::remove_file(self.state_path.with_extension("pending-upload.kdbx"));
                     json!({"restored":true})
                 }
             };
@@ -675,7 +720,7 @@ impl Session {
                 self.write(&next, pin)?;
                 self.unlocked.as_mut().unwrap().1 = next;
                 if self.unlocked.as_ref().unwrap().1.disk.upload.is_none() {
-                    let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
+                    let _ = fs::remove_file(self.state_path.with_extension("pending-upload.kdbx"));
                 }
                 return Ok(value);
             }
@@ -688,7 +733,7 @@ impl Session {
         let job = match op {
             "diskRetryUpload" => {
                 let pending = v.disk.upload.as_ref().ok_or("Нет отложенной отправки")?;
-                let bytes = fs::read(self.path.with_extension("pending-upload.kdbx"))
+                let bytes = fs::read(self.state_path.with_extension("pending-upload.kdbx"))
                     .map_err(|_| "Нет файла отложенной отправки. Проверьте версии.")?;
                 if format!("{:x}", Sha256::digest(&bytes)) != pending.sha256 {
                     return Err("Копия для отправки изменилась. Проверьте версии.");
@@ -715,8 +760,11 @@ impl Session {
                         expected: expected.clone(),
                         sha256: format!("{:x}", Sha256::digest(&bytes)),
                     });
-                    storage::persist(&self.path.with_extension("pending-upload.kdbx"), &bytes)
-                        .map_err(|_| "Не удалось сохранить файл для повторной отправки")?;
+                    storage::persist(
+                        &self.state_path.with_extension("pending-upload.kdbx"),
+                        &bytes,
+                    )
+                    .map_err(|_| "Не удалось сохранить файл для повторной отправки")?;
                     self.write(&next, pin)?;
                     self.unlocked.as_mut().unwrap().1 = next;
                     Job::start(move |c| c.upload(bytes, expected), account)
@@ -752,6 +800,34 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_selected_file_survives_reopen_and_missing_file_is_not_recreated() {
+        let folder = tempfile::tempdir().unwrap();
+        let profile = tempfile::tempdir().unwrap();
+        let path = folder.path().join("Работа.kk");
+        let state = profile.path().join("vault.kk");
+        let open = || Session::with_state(path.clone(), state.clone(), [42; 32]).unwrap();
+        let create = json!({"op":"create","pin":"fixture-pin"});
+        open().call(create.clone()).unwrap();
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
+        let mut session = open();
+        session
+            .call(json!({"op":"unlock","pin":"fixture-pin"}))
+            .unwrap();
+        let moved = folder.path().join("Перенесено.kk");
+        fs::rename(&path, &moved).unwrap();
+        assert_eq!(
+            session.call(json!({"op":"status"})).unwrap()["exists"],
+            true
+        );
+        assert!(session.call(create.clone()).is_err());
+        assert!(!path.exists());
+        fs::rename(moved, &path).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(storage::persist_new(&path, b"replacement").is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
 
     #[test]
     fn undo_expires_and_cannot_cross_sessions() {

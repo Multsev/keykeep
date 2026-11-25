@@ -115,23 +115,40 @@ for(const allow of [false,true]){
   await until(()=>!el('mcpApproval').open,'MCP decision closed');
 }
 el('mcpToggle').click();await until(()=>el('mcpControls').hidden,'MCP stop');el('dismiss').click();
-el('lock').click();await until(()=>!el('gate').hidden && !el('allVaults').hidden,'locked catalog');
-el('allVaults').click();await until(()=>el('vaultCatalog').open && el('catalogRows').textContent.includes('Основное'),'existing vault listed');
-el('catalogName').value='Проверка';el('catalogNew').requestSubmit();
-await until(()=>!el('vaultCatalog').open && el('activeVaultName').textContent==='Проверка' && el('enter').textContent==='Создать хранилище','new profile');
+if(el('toggleCatalog').getAttribute('aria-expanded')!=='false')throw Error('drawer did not collapse');
+el('toggleCatalog').click();
+await until(()=>!el('vaultCatalog').inert && el('catalogRows').textContent.includes('Основное'),'drawer while unlocked');
+el('catalogAdd').click();
+await until(()=>el('activeVaultName').textContent==='Проверка' && el('enter').textContent==='Создать хранилище','new profile');
+const secondFile=el('vaultPath').textContent;
+if(!secondFile.endsWith('/Downloads/Проверка.kk'))throw Error('missing vault path');
+el('rememberVault').checked=true;
 el('pin').value=el('repeat').value='separate-pin';el('enter').click();
-await until(()=>!el('vault').hidden && el('tree').children.length,'new profile unlocked');
+await until(()=>!el('vault').hidden && el('tree').children.length && el('vaultCatalog').inert,'second opened');
 if(el('rows').children.length)throw Error('vault isolation');
-el('lock').click();await until(()=>!el('gate').hidden && el('enter').textContent==='Открыть','second locked');
-el('allVaults').click();
-await until(()=>el('catalogRows').children.length===2 && el('vaultCatalog').open,'choose vault to delete');
-const remove=el('catalogRows').querySelector('[aria-label="Удалить хранилище Проверка"]');
-remove.click();el('trashCancel').click();
+const choose=name=>{
+  if(el('toggleCatalog').getAttribute('aria-expanded')==='false')el('toggleCatalog').click();
+  Array.from(el('catalogRows').querySelectorAll('button')).find(b=>b.textContent===name).click();
+};
+choose('Основное');
+await until(()=>!el('gate').hidden && el('activeVaultName').textContent==='Основное' && !catalogBusy,'first requires PIN');
+if(el('vaultPath').textContent===secondFile)throw Error('stale vault path');
+el('pin').value='new-test-pin';el('rememberVault').checked=true;el('enter').click();
+await until(()=>!el('vault').hidden && el('rows').children.length===1,'original entry');
+el('rows').firstChild.click();await until(()=>!el('editor').hidden && current && current.id,'edit original');
+el('note').value='Черновик рабочей заметки';
+choose('Проверка');
+await until(()=>!catalogBusy && el('vaultPath').textContent===secondFile && !el('vault').hidden && !el('rows').children.length,'remembered second');
+choose('Основное');
+await until(()=>!catalogBusy && !el('vault').hidden && el('rows').children.length===1,'remembered original');
+if(el('editor').hidden || el('note').value!=='Черновик рабочей заметки')throw Error('lost draft on switch');
+el('lock').click();await until(()=>!el('gate').hidden && !el('vaultCatalog').inert,'lock all');
+choose('Проверка');
+await until(()=>!catalogBusy && !el('gate').hidden && el('vaultPath').textContent===secondFile,'lock forgot second');
+el('catalogRemove').click();el('trashCancel').click();
 if(!el('trashQuestion').hidden || el('catalogRows').children.length!==2)throw Error('delete cancellation');
-remove.click();el('trashConfirm').click();
-await until(()=>el('catalogRows').children.length===1 && el('trashQuestion').hidden,'delete without old PIN');
-el('catalogRows').querySelector('button').click();
-await until(()=>!el('vaultCatalog').open && el('activeVaultName').textContent==='Основное','selected original');
+el('catalogRemove').click();el('trashConfirm').click();
+await until(()=>!catalogBusy && el('catalogRows').children.length===1 && el('trashQuestion').hidden,'delete without old PIN');
 el('pin').value='new-test-pin';el('enter').click();
 await until(()=>!el('vault').hidden && el('rows').children.length===1,'original entry survived');
 el('settings').click();await until(()=>el('security').open,'erase settings');
@@ -146,4 +163,11 @@ await until(()=>!el('gate').hidden && el('enter').textContent==='Создать 
 el('pin').value=el('repeat').value='after-erase';el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'create after erase');
 if(el('rows').children.length)throw Error('old entry survived');
-return 'WKWebView: create, save, reopen, PIN rotation, button weight MCP HTTP approvals multi-vault selection, locked deletion and vault erasure passed';
+await until(()=>el('vaultCatalog').getBoundingClientRect().right<=1 && el('vaultLocation').getBoundingClientRect().bottom<=innerHeight+1,'drawer collapsed and file path visible');
+if(checkFinder){
+  if(el('revealVaultFile').getBoundingClientRect().width<1)throw Error('Finder link not visible');
+  el('revealVaultFile').click();
+  await new Promise(resolve=>setTimeout(resolve,2500));
+  if(el('message').textContent)throw Error('Finder action failed');
+}
+return 'PASS WKWebView: sliding drawer, independent unlocks, draft, file path, lock-all, erasure and MCP';

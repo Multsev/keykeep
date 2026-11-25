@@ -17,6 +17,20 @@ unsafe extern "C" fn kk_new(path: *const c_char) -> *mut Session {
     Session::new(path.into(), [0; 32]).map_or(ptr::null_mut(), |s| Box::into_raw(Box::new(s)))
 }
 #[unsafe(no_mangle)]
+unsafe extern "C" fn kk_new_at(path: *const c_char, state: *const c_char) -> *mut Session {
+    if path.is_null() || state.is_null() {
+        return ptr::null_mut();
+    }
+    let (Ok(path), Ok(state)) = (
+        (unsafe { CStr::from_ptr(path) }).to_str(),
+        (unsafe { CStr::from_ptr(state) }).to_str(),
+    ) else {
+        return ptr::null_mut();
+    };
+    Session::with_state(path.into(), state.into(), [0; 32])
+        .map_or(ptr::null_mut(), |s| Box::into_raw(Box::new(s)))
+}
+#[unsafe(no_mangle)]
 unsafe extern "C" fn kk_call(s: *mut Session, request: *const c_char) -> *mut c_char {
     let result = (|| {
         let session = unsafe { s.as_mut() }.ok_or("Нет сеанса")?;
