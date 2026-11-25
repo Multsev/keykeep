@@ -70,3 +70,6 @@ pub fn persist(path: &Path, ciphertext: &[u8]) -> std::io::Result<()> {
     tmp.persist(path)?;
     std::fs::File::open(dir)?.sync_all()
 }
+
+#[cfg(test)]
+mod tests;
