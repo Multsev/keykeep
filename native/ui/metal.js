@@ -7,7 +7,7 @@ const metal=(()=>{
   };
   const time={micro:150,normal:245,complex:360,shell:430};
   const viscosity='cubic-bezier(.24,.7,.2,1)', elasticity='cubic-bezier(.2,.9,.25,1.12)';
-  const inertia=4,tension=.13,reflection=.15;
+  const reflection=.18;
   let level='off';
   const motions=new Map(), ghosts=new Set();
   function stop(){
@@ -38,29 +38,77 @@ const metal=(()=>{
     return anim;
   }
   function form(node,kind='normal'){
-    const f=strength();if(!f)return;
-    play(node,[{transform:'translateY('+(-inertia*f)+'px) scaleY('+(1-tension*f)+')',opacity:.55,borderRadius:'1em'},{transform:'none',opacity:1}],kind,true);
+    const r=bounds(node);if(r?.width)rim(r,false,kind);
   }
-  function surface(rect,destination,vanish=false,kind='normal'){
-    const f=strength();if(!f || !rect?.width || !destination?.width)return;
-    const node=document.createElement('i');node.className='metal-surface';node.setAttribute('aria-hidden','true');
-    const scale=vanish ? .12 : .2, dx=rect.x-destination.x,dy=rect.y-destination.y;
-    Object.assign(node.style,{left:destination.x+'px',top:destination.y+'px',width:destination.width+'px',height:destination.height+'px'});
-    document.body.append(node);ghosts.add(node);
-    const small={transform:'translate('+dx+'px,'+dy+'px) scale('+scale+')',borderRadius:'50%',opacity:.55};
-    const full={transform:'none',borderRadius:'6px',opacity:.08};
-    const anim=play(node,vanish?[full,small]:[small,full],kind);
-    anim.finished.catch(()=>{}).finally(()=>{ghosts.delete(node);node.remove();});
+  function transient(node,frames,kind){
+    ghosts.add(node);
+    const anim=play(node,frames,kind);
+    const discard=()=>{ghosts.delete(node);node.remove();};
+    if(anim)anim.finished.then(discard,discard);else discard();
+  }
+  function layer(host,style){
+    const node=document.createElement('i');
+    node.setAttribute('aria-hidden','true');node.className=style;
+    host.append(node);
+    return node;
+  }
+  function rim(r,closing,kind='complex'){
+    if(!r.width || !r.height || !strength())return;
+    const node=layer(document.body,'metal-surface metal-rim');
+    const width=Math.min(r.width,180);
+    Object.assign(node.style,{left:r.x+(r.width-width)/2+'px',top:r.y+r.height-3+'px',width:width+'px'});
+    const bead={transform:'scale(.05,1.8)',opacity:.95};
+    const filament={transform:'scale(1,1)',opacity:.8};
+    const frames=closing?[filament,bead,{...bead,opacity:0}]:[bead,filament,{...filament,opacity:0}];
+    transient(node,frames,kind);
   }
   function bounds(node){if(strength() && node)return node.getBoundingClientRect();}
   function find(key,id){return document.querySelector('['+key+'="'+CSS.escape(id)+'"]');}
-  function birth(node,source){const r=bounds(node);if(r){surface(bounds(source)||r,r);form(node);}}
-  function remove(r){if(r)surface(r,r,true);}
-  function shine(node){play(node,[{backgroundColor:'var(--metal-glint)'},{backgroundColor:'transparent'}],'micro');}
-  function card(from,node){
-    const dest=bounds(node);if(!dest)return;
-    if(from)surface(from,{x:dest.x,y:dest.y,width:Math.min(dest.width,from.width),height:from.height},false,'complex');
-    play(node,[{transform:'translateX('+inertia*strength()+'px)'},{transform:'none'}],'normal');
+  function birth(node){form(node,'complex');}
+  function remove(r){if(r)rim(r,true);}
+  function shine(node){form(node,'micro');}
+  // A bead on the list margin follows the selection without moving the labels.
+  // Mount it in the scrollable list so its column clips it during scrolling.
+  function select(from,target,list){
+    const dest=bounds(target);
+    if(!dest?.height)return;
+    const track=list.parentElement;
+    const box=track.getBoundingClientRect();
+    const end=dest.top+dest.height/2;
+    const clip=list.closest('section').getBoundingClientRect();
+    const start=Math.min(clip.bottom,Math.max(clip.top,from?from.top+from.height/2:end));
+    const dy=start-end;
+    for(const previous of track.querySelectorAll(':scope > .metal-bead,:scope > .metal-film')){
+      cancel(previous);previous.remove();
+    }
+    const film=layer(track,'metal-film');
+    Object.assign(film.style,{left:dest.left-box.left+'px',top:dest.top-box.top+'px',width:dest.width+'px',height:dest.height+'px'});
+    transient(film,[
+      {transform:'translateY('+dy+'px) scale(.98,.92)',opacity:.36},
+      {transform:'translateY('+dy*.45+'px) scale(.86,1.15)',opacity:.52,offset:.42},
+      {transform:'none',opacity:.32,offset:.82},
+      {transform:'none',opacity:0}
+    ],'complex');
+    const bead=layer(track,'metal-bead');
+    Object.assign(bead.style,{left:Math.max(0,dest.left-box.left)+'px',top:end-box.top-5+'px'});
+    const stretch=1+strength()*Math.min(5,Math.abs(dy)/15);
+    transient(bead,[
+      {transform:'translateY('+dy+'px) scale(1,1)',opacity:.9},
+      {transform:'translateY('+dy*.52+'px) scale(.65,'+stretch+')',opacity:1,offset:.38},
+      {transform:'translateY(0) scale(1.35,.8)',opacity:1,offset:.78},
+      {transform:'none',opacity:0}
+    ],'complex');
+  }
+  function card(){
+    const host=document.getElementById('entryPath');
+    if(!strength())return;
+    const previous=host.querySelector('.metal-wave');
+    if(previous){cancel(previous);previous.remove();}
+    transient(layer(host,'metal-wave'),[
+      {transform:'translateX(-100%) scaleX(.18)',opacity:0},
+      {transform:'translateX(-18%) scaleX(.85)',opacity:.95,offset:.35},
+      {transform:'translateX(120%) scaleX(.3)',opacity:0}
+    ],'shell');
   }
   function mask(show){
     const node=document.getElementById('metal-mask');if(!node)return;
@@ -72,15 +120,7 @@ const metal=(()=>{
   }
   function shell(node,open){
     const r=bounds(node);if(!r?.width)return;
-    // Animate empty plates above the authenticated UI. Keep the actual fields stationary.
-    for(const right of [false,true]){
-      const plate=document.createElement('i');plate.setAttribute('aria-hidden','true');plate.className='metal-surface';
-      Object.assign(plate.style,{left:(r.left+(right?r.width/2:0))+'px',top:r.top+'px',width:r.width/2+'px',height:r.height+'px',transformOrigin:right?'right':'left'});
-      ghosts.add(plate);document.body.append(plate);
-      const whole={transform:'scaleX(1)',opacity:.35},edge={transform:'scaleX(0)',opacity:0};
-      const anim=play(plate,open?[whole,edge]:[edge,whole,{...whole,opacity:0}],'shell');
-      anim.finished.catch(()=>{}).finally(()=>{ghosts.delete(plate);plate.remove();});
-    }
+    rim({x:r.x,y:r.y,width:r.width,height:5},!open,'shell');
   }
-  return {apply,stop,cancel,play,bounds,find,form,birth,remove,shine,card,mask,shell,surface,strength};
+  return {apply,stop,cancel,play,bounds,find,form,birth,remove,shine,select,card,mask,shell,strength};
 })();

@@ -231,7 +231,13 @@ async function refresh() {
     if(query)paths.set(f.id,path);
     options.push(new Option('　'.repeat(depth) + f.name, f.id));
     const subfolders=children.get(f.id) || [];
-    const button=row((window.KeyKeep?'　'.repeat(depth):'') + f.name,async () => {rememberDraft();selectTrash(false);folder=f.id;current=null;el('editor').hidden=true;screen('entries');await refresh();},!trashSelected && folder===f.id);
+    const button=row((window.KeyKeep?'　'.repeat(depth):'') + f.name,async () => {
+      const changed=folder!==f.id || trashSelected;
+      const from=changed && metal.bounds(el('tree').querySelector('.tree-name[aria-current=true]'));
+      rememberDraft();selectTrash(false);folder=f.id;current=null;el('editor').hidden=true;screen('entries');
+      await refresh();
+      if(changed && folder===f.id)metal.select(from,el('tree').querySelector('.tree-name[aria-current=true]'),el('tree'));
+    },!trashSelected && folder===f.id);
     const count=document.createElement('small');
     count.textContent='Папок: '+subfolders.length+' · Записей: '+(data.entryCounts[f.id] || 0);
     button.dataset.folder=f.id;
@@ -250,7 +256,20 @@ async function refresh() {
   el('entriesEmpty').textContent=query?'Ничего не найдено':'Пока нет записей';
   el('entriesEmpty').hidden=Boolean(data.entries.length);
   setChildren(el('rows'), ...data.entries.map(e=>{
-    const b=row(e.title,async()=>{const from=metal.bounds(b);rememberDraft();const item=await call('get',{id:e.id});if(el('vault').hidden || document.body.classList.contains('metal-sealed'))return;edit(item);metal.card(from,el('editor'));await refresh();},current && current.id===e.id);
+    const b=row(e.title,async()=>{
+      const selected=el('rows').querySelector('[aria-current=true]');
+      const switching=current?.id!==e.id;
+      const from=switching && metal.bounds(selected);
+      rememberDraft();
+      const item=await call('get',{id:e.id});
+      if(el('vault').hidden || document.body.classList.contains('metal-sealed'))return;
+      edit(item);
+      await refresh();
+      if(switching && current?.id===e.id && metal.strength()){
+        metal.select(from,metal.find('data-entry',e.id),el('rows'));
+        metal.card();
+      }
+    },current && current.id===e.id);
     b.classList.toggle('metal-match',Boolean(query));b.dataset.folder=e.folderId;b.dataset.entry=e.id;
     if(!window.KeyKeep)makeDraggable(b,{kind:'entry',id:e.id,from:e.folderId});
     const sub=document.createElement('small');sub.textContent=query?[paths.get(e.folderId),e.username].filter(Boolean).join(' · '):e.username;b.append(sub);return b;
@@ -262,7 +281,8 @@ function updateEntryPath(){
   const id=window.KeyKeep && current.id?el('entryFolder').value:current.folderId;
   const parts=ancestors(id).reverse().map(key=>folderIndex.get(key).name);
   parts.push(el('title').value.trim() || 'Новая запись');
-  el('entryPath').textContent=parts.join(' › ');
+  const path=parts.join(' › ');
+  if(el('entryPath').textContent!==path)el('entryPath').textContent=path;
 }
 el('title').addEventListener('input',updateEntryPath);
 el('entryFolder').addEventListener('change',updateEntryPath);

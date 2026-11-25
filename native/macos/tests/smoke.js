@@ -88,6 +88,17 @@ if(benchCount>0){
   const child=(await rpc('create_folder',{name:'Child',parentId:parent})).result.structuredContent.id;
   const id=(await rpc('create_password_entry',{title:'Nested',username:'demo',password:'test-only',folderId:child})).result.structuredContent.id;
   await refresh();edit(await call('get',{id}));
+  // Exercise the same selection path as two consecutive clicks in the list.
+  const first=readback.entries.find(entry=>entry.folderId===parent).id;
+  for(const target of [first,id]){
+    metal.find('data-entry',target).click();
+    await until(()=>current?.id===target && metal.find('data-entry',target)?.getAttribute('aria-current')==='true','selected entry');
+    if(metal.strength()){
+      if(!el('rows').parentElement.querySelector('.metal-film') || !el('rows').parentElement.querySelector('.metal-bead') || !el('entryPath').querySelector('.metal-wave'))throw Error('missing selection motion');
+      if(el('editor').getAnimations().length)throw Error('moving entry fields');
+    }
+  }
+  await until(()=>!document.querySelector('.metal-film,.metal-bead,.metal-wave'),'finished selection motion');
   const prefix='Все записи › Latency fixture › Child › ';
   if(el('entryPath').textContent!==prefix+'Nested')throw Error('nested entry path');
   el('title').value='Renamed';el('title').dispatchEvent(new Event('input'));
