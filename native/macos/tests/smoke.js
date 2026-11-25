@@ -59,7 +59,16 @@ await until(()=>!el('vault').hidden && el('tree').children.length,'create');
      Math.abs(start.bottom-pane.getBoundingClientRect().bottom)>1 || Math.abs(start.width-pane.clientWidth)>1 ||
      !button.querySelector('svg'))throw Error('trash footer geometry');
   filler.remove();
-  button.click();await until(()=>el('deletedItems').open,'open pinned trash');el('closeDeleted').click();
+  button.click();
+  await until(()=>button.getAttribute('aria-current')==='true' && el('entriesEmpty').textContent==='Корзина пуста','empty trash column');
+  if(el('entriesTitle').textContent!=='Корзина' || document.querySelector('dialog[open]') || getComputedStyle(el('detail')).display!=='none')throw Error('trash layout');
+  const id=await call('save',{id:'',values:{title:'Fixture trash',username:'test',password:'test',folderId:'root'},time:new Date().toISOString()});
+  await call('deleteEntry',{id,confirmed:true});await refresh();
+  el('deletedList').querySelector('button').click();
+  await until(()=>!el('deletedList').children.length,'restore inline');
+  el('tree').querySelector('.tree-name').click();
+  await until(()=>el('entriesTitle').textContent==='Записи' && el('rows').textContent.includes('Fixture trash'),'return to folder');
+  await call('deleteEntry',{id,confirmed:true});await refresh();
 }
 if(benchCount>0){
   await call('mcpCreationMode',{enabled:true});

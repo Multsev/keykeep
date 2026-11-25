@@ -183,3 +183,11 @@ dialog{max-height:85dvh}
  body[data-screen=folders] #folders{display:flex;height:100%}
  body[data-screen=folders]:not(.mac-vaults) #vault{height:100vh;height:100dvh;min-height:0}
 }
+
+#showDeleted[aria-current=true]{background:#345475;color:white}
+.view-trash :is(#rows,#draftRow,#detail,#moveNotice,#undoNotice){display:none}
+.deleted-row{display:flex;align-items:center;justify-content:space-between;gap:.6rem;padding:.35rem .2rem;border-bottom:1px solid var(--line)}
+.deleted-row>div{min-width:0;overflow-wrap:anywhere}
+.deleted-row small{display:block;color:var(--muted)}
+.deleted-row button{flex:none}
+@media(min-width:661px){.view-trash .panes{grid-template-columns:minmax(0,21%) minmax(0,1fr)}}

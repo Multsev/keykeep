@@ -40,6 +40,7 @@ function installWorkspaceTools(){
   function openCreationMenu(e){
     e.preventDefault();
     const inTree=e.currentTarget===el('folders');
+    if(e.target.closest('#showDeleted') || (!inTree && trashSelected))return;
     const targetFolder=e.target.closest('[data-folder]')?.dataset.folder;
     const entry=e.target.closest('[data-entry]');
     contextItem=inTree && targetFolder && targetFolder!=='root'
@@ -56,7 +57,7 @@ function installWorkspaceTools(){
   el('folders').oncontextmenu=el('entries').oncontextmenu=openCreationMenu;
   on('contextNewEntry','click',async()=>{
     closeCatalogMenu();
-    folder=entryDestination;
+    selectTrash(false);folder=entryDestination;
     el('search').value='';setSearchOpen(false);
     openDraft(folder);
     await refresh();

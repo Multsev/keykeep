@@ -6,6 +6,7 @@ function setChildren(element, ...children) {
   element.append(...children);
 }
 const keys = ['title','username','password','website','note'];
+let trashSelected=false;
 let exists = false, folder = 'root', current = null, listing = 0;
 let requestId = 0;
 let undoToken=null, undoTimer;
@@ -60,7 +61,7 @@ async function reset(promptOnOpen=false) {
   el('vaultRename').close();
   el('recoveryDialog').close();
   el('trashQuestion').close();
-  el('deletedItems').close();el('deletedList').replaceChildren();
+  selectTrash(false);
   el('eraseDialog').close();
   clearDiskPreview();
   ++listing;
@@ -97,7 +98,7 @@ function captureWorkspace(){
     editor={...current,customFields:collectFields(),folderId:window.KeyKeep && current.id?el('entryFolder').value:current.folderId};
     for(const key of keys)editor[key]=el(key).value;
   }
-  rememberDraft();return {drafts:[...draftMap],folder,query:el('search').value,editor,screen:document.body.dataset.screen};
+  rememberDraft();return {drafts:[...draftMap],folder,trash:trashSelected,query:el('search').value,editor,screen:document.body.dataset.screen};
 }
 function setDrawer(open){
   if(!open)closeCatalogMenu();
@@ -211,8 +212,9 @@ async function refresh() {
   const revision = ++listing;
   const query=el('search').value.trim();
   const data = await call('list',{folder,query});
+  const deleted=trashSelected?await call('listDeleted'):null;
   if (revision !== listing) return;
-  el('folderActions').hidden=!window.KeyKeep || folder==='root';
+  el('folderActions').hidden=trashSelected || !window.KeyKeep || folder==='root';
   folderIndex=new Map(data.folders.map(f=>[f.id,f]));
   const tree = [];
   const options = [];
@@ -228,7 +230,7 @@ async function refresh() {
     if(query)paths.set(f.id,path);
     options.push(new Option('　'.repeat(depth) + f.name, f.id));
     const subfolders=children.get(f.id) || [];
-    const button=row((window.KeyKeep?'　'.repeat(depth):'') + f.name,async () => {rememberDraft();folder=f.id;current=null;el('editor').hidden=true;screen('entries');await refresh();},folder===f.id);
+    const button=row((window.KeyKeep?'　'.repeat(depth):'') + f.name,async () => {rememberDraft();selectTrash(false);folder=f.id;current=null;el('editor').hidden=true;screen('entries');await refresh();},!trashSelected && folder===f.id);
     const count=document.createElement('small');
     count.textContent='Папок: '+subfolders.length+' · Записей: '+(data.entryCounts[f.id] || 0);
     button.dataset.folder=f.id;
@@ -242,6 +244,7 @@ async function refresh() {
   el('entryFolder').value = selectedFolder || folder;
   setChildren(el('tree'), ...tree);
   if(!window.KeyKeep)paintBranches();
+  if(trashSelected){renderDeleted(deleted,query);return;}
   el('entriesEmpty').textContent=query?'Ничего не найдено':'Пока нет записей';
   el('entriesEmpty').hidden=Boolean(data.entries.length);
   setChildren(el('rows'), ...data.entries.map(e=>{
@@ -285,7 +288,7 @@ async function showEntries(){
     setDrawer(false);await refreshCatalog();el('searchToggle').focus();
     folded=new Set(await collapsedFolders());
     previous=workspaces.get(activeVaultId);workspaces.delete(activeVaultId);
-    if(previous){draftMap=new Map(previous.drafts);folder=previous.folder;el('search').value=previous.query;}
+    if(previous){draftMap=new Map(previous.drafts);folder=previous.folder;selectTrash(Boolean(previous.trash));el('search').value=previous.query;}
     setSearchOpen(Boolean(el('search').value));
   }
   await refresh();
@@ -380,7 +383,7 @@ on('bioUnlock','click',async()=>{
 });
 on('newFolder','submit',async()=>{
   const parent=el('folderCreateDialog').open?folderCreateParent:folder;
-  rememberDraft();folder=await call('addFolder',{name:el('folderName').value,parent});
+  rememberDraft();folder=await call('addFolder',{name:el('folderName').value,parent});selectTrash(false);
   if(!window.KeyKeep)revealBranch(parent);
   el('folderCreateDialog').close();el('newFolder').reset();current=null;el('editor').hidden=true;screen('entries');await refresh();
 });
@@ -415,7 +418,7 @@ on('search','input',async()=>{screen('entries');await refresh();});
 on('back','click',()=>screen(document.body.dataset.screen==='detail'?'entries':'folders'));
 document.addEventListener('keydown',e=>{
   if(el('vault').hidden)return;
-  if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(document.querySelector('dialog[open]'))return;if(e.key==='n')openDraft(folder);else if(window.KeyKeep)el('search').focus();else setSearchOpen(true);}
+  if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(document.querySelector('dialog[open]'))return;if(e.key==='n')el('add').click();else if(window.KeyKeep)el('search').focus();else setSearchOpen(true);}
   const catalogRow=e.target.closest('.vault-row');
   if(catalogRow && ['ArrowUp','ArrowDown'].includes(e.key)){
     e.preventDefault();
@@ -545,20 +548,33 @@ on('eraseForm','submit',async()=>{
   finally{el('confirmErase').disabled=false;}
 });
 
-async function renderDeleted(){
-  const items=await call('listDeleted');
-  const list=el('deletedList');list.replaceChildren();
-  if(!items.length)list.textContent='Корзина пуста';
-  for(const item of items){
-    const line=document.createElement('div'), name=document.createElement('span');
-    name.textContent=[...item.path,item.name].join(' › ');
+function selectTrash(selected){
+  trashSelected=selected;
+  el('entriesTitle').textContent=selected?'Корзина':'Записи';
+  el('showDeleted').setAttribute('aria-current',String(selected));
+  el('vault').classList.toggle('view-trash',selected);
+  el('deletedList').hidden=!selected;
+  el('deletedList').replaceChildren();
+  el('add').disabled=selected;
+}
+function renderDeleted(items,query){
+  const matches=items.filter(item=>[...item.path,item.name].join(' › ').toLowerCase().includes(query.toLowerCase()));
+  setChildren(el('deletedList'),...matches.map(item=>{
+    const line=document.createElement('div'),label=document.createElement('div'),path=document.createElement('small');
+    label.textContent=item.name;
+    path.textContent=item.path.join(' › ');label.append(path);
     const button=actionButton('Восстановить',async()=>{
       button.disabled=true;
-      try{await call('restoreDeleted',{id:item.id});await renderDeleted();await refresh();}
-      catch(error){button.disabled=false;line.title=error.message;el('message').textContent=error.message;}
+      try{await call('restoreDeleted',{id:item.id});await refresh();}
+      finally{button.disabled=false;}
     });
-    line.className='field-actions';line.append(name,button);list.append(line);
-  }
+    button.setAttribute('aria-label','Восстановить «'+item.name+'»');
+    line.className='deleted-row';line.append(label,button);return line;
+  }));
+  el('entriesEmpty').hidden=matches.length>0;
+  el('entriesEmpty').textContent=items.length?'Ничего не найдено':'Корзина пуста';
 }
-on('showDeleted','click',async()=>{await renderDeleted();el('deletedItems').showModal();});
-el('closeDeleted').onclick=()=>el('deletedItems').close();
+on('showDeleted','click',async()=>{
+  rememberDraft();current=null;el('editor').hidden=true;clearEntryExtras();el('editor').reset();
+  el('search').value='';selectTrash(true);screen('entries');await refresh();
+});
