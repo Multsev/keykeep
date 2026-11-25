@@ -9,12 +9,13 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 pub struct Session {
+    pub(crate) mcp: Option<crate::mcp::Server>,
     cloud_job: Option<crate::yandex::Job>,
     restore_revision: Option<Vec<u8>>,
     attempts: crate::attempts::Attempts,
     path: PathBuf,
     device: Zeroizing<[u8; 32]>,
-    unlocked: Option<(Zeroizing<String>, Vault)>,
+    pub(crate) unlocked: Option<(Zeroizing<String>, Vault)>,
     // Exclude independent editing sessions across processes.
     _lock: fs::File,
 }
@@ -32,6 +33,7 @@ impl Session {
             return Err("Хранилище уже открыто");
         }
         Ok(Self {
+            mcp: None,
             cloud_job: None,
             restore_revision: None,
             attempts: crate::attempts::Attempts::new(path.with_extension("attempts")),
@@ -41,12 +43,55 @@ impl Session {
             _lock: lock,
         })
     }
-    fn write(&self, v: &Vault, pin: &str) -> Result<(), &'static str> {
+    pub(crate) fn write(&self, v: &Vault, pin: &str) -> Result<(), &'static str> {
         storage::persist(&self.path, &storage::seal(v, pin, &self.device)?)
             .map_err(|_| "Ошибка сохранения")
     }
     pub(crate) fn active_pin(&self) -> Option<&str> {
         self.unlocked.as_ref().map(|(pin, _)| pin.as_str())
+    }
+    pub(crate) fn save_entry(
+        next: &mut Vault,
+        id: &str,
+        values: Values,
+        time: String,
+        create_missing: bool,
+    ) -> Result<String, &'static str> {
+        if values.title.trim().is_empty() || !next.folders.iter().any(|f| f.id == values.folder_id)
+        {
+            return Err("Проверьте название и папку");
+        }
+
+        if id.is_empty() || (create_missing && !next.entries.iter().any(|e| e.id == id)) {
+            let id = if id.is_empty() {
+                Uuid::new_v4().to_string()
+            } else {
+                id.to_owned()
+            };
+            next.entries.push(Entry {
+                id: id.clone(),
+                values,
+                updated_at: time,
+                history: vec![],
+            });
+            Ok(id)
+        } else {
+            let e = next
+                .entries
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or("Запись отсутствует")?;
+            if e.values != values {
+                e.history.push(Revision {
+                    changed_at: time.clone(),
+                    values: Some(serde_json::to_string(&e.values).map_err(|_| "Ошибка истории")?),
+                    password: None,
+                });
+                e.updated_at = time;
+                e.values = values;
+            }
+            Ok(id.to_owned())
+        }
     }
     fn keyfile(request: &Value) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         use base64::{Engine, engine::general_purpose::STANDARD};
@@ -86,6 +131,7 @@ impl Session {
             "lock" => {
                 self.cloud_job = None;
                 self.restore_revision = None;
+                self.mcp = None;
                 self.unlocked = None;
                 return Ok(Value::Null);
             }
@@ -111,6 +157,13 @@ impl Session {
                 } else if let Some(client) = r["yandex_disk_client_id"].as_str() {
                     vault.disk.configure(client, "KeyKeep")?;
                 }
+                if let Some(token) = r["keykeep_mcp_token"].as_str().filter(|t| {
+                    t.len() == 43
+                        && t.bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                }) {
+                    vault.mcp_token = token.into();
+                }
                 vault.disk.token = r["yandex_disk_access_token"]
                     .as_str()
                     .unwrap_or_default()
@@ -128,6 +181,7 @@ impl Session {
             "unlock" | "create" | "createFromKdbx" => {
                 self.cloud_job = None;
                 self.restore_revision = None;
+                self.mcp = None;
                 self.unlocked = None;
                 let pin = arg("pin")?;
                 let vault = if op != "unlock" {
@@ -167,6 +221,9 @@ impl Session {
             }
             _ => {}
         }
+        if op.starts_with("mcp") {
+            return self.mcp_operation(op, &r);
+        }
         if op.starts_with("disk") {
             return self.disk_operation(op, &r);
         }
@@ -190,6 +247,8 @@ impl Session {
                 }
                 let mut next = Self::read_database(&r, password, keyfile)?;
                 next.disk = v.disk.clone();
+                next.mcp_token.clone_from(&v.mcp_token);
+                self.mcp = None;
                 let backup =
                     fs::read(&self.path).map_err(|_| "Не удалось прочитать прежнюю базу")?;
                 storage::persist(&self.path.with_extension("before-import.kk"), &backup)
@@ -344,42 +403,13 @@ impl Session {
                 } else {
                     let values: Values = serde_json::from_value(r["values"].clone())
                         .map_err(|_| "Некорректные поля")?;
-                    if values.title.trim().is_empty()
-                        || !next.folders.iter().any(|f| f.id == values.folder_id)
-                    {
-                        return Err("Проверьте название и папку");
-                    }
-                    let time = arg("time")?.to_owned();
-                    let id = arg("id")?;
-                    if id.is_empty() {
-                        let id = Uuid::new_v4().to_string();
-                        next.entries.push(Entry {
-                            id: id.clone(),
-                            values,
-                            updated_at: time,
-                            history: vec![],
-                        });
-                        id
-                    } else {
-                        let e = next
-                            .entries
-                            .iter_mut()
-                            .find(|e| e.id == id)
-                            .ok_or("Запись отсутствует")?;
-                        if e.values != values {
-                            e.history.push(Revision {
-                                changed_at: time.clone(),
-                                values: Some(
-                                    serde_json::to_string(&e.values)
-                                        .map_err(|_| "Ошибка истории")?,
-                                ),
-                                password: None,
-                            });
-                            e.updated_at = time;
-                            e.values = values;
-                        }
-                        id.to_owned()
-                    }
+                    Self::save_entry(
+                        &mut next,
+                        arg("id")?,
+                        values,
+                        arg("time")?.to_owned(),
+                        false,
+                    )?
                 };
                 self.write(&next, pin)?;
                 self.unlocked.as_mut().unwrap().1 = next;
@@ -422,6 +452,8 @@ impl Session {
                     }
                     let mut next = crate::kdbx::import(&data, &password, None)?;
                     next.disk = v.disk.clone();
+                    next.mcp_token.clone_from(&v.mcp_token);
+                    self.mcp = None;
                     storage::persist(&self.path.with_extension("before-restore.kk"), &current)
                         .map_err(|_| "Не удалось сохранить локальный снимок")?;
                     self.write(&next, pin)?;

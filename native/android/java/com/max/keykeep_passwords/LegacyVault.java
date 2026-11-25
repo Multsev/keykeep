@@ -36,7 +36,7 @@ final class LegacyVault {
         String wrapped = context.getSharedPreferences("FlutterSecureKeyStorage",Context.MODE_PRIVATE).getString(WRAPPED,null);
         Key aes = rsa.unwrap(Base64.decode(wrapped, Base64.DEFAULT),"AES",Cipher.SECRET_KEY);
         JSONObject request = new JSONObject().put("op","migrateAndroid").put("pin",pin);
-        for (String field : new String[]{"master_pin_salt","master_pin_verifier","vault_entries","vault_folders","unlock_blocked_until","yandex_disk_sync_folder","yandex_disk_client_id","yandex_disk_access_token"}) {
+        for (String field : new String[]{"master_pin_salt","master_pin_verifier","vault_entries","vault_folders","unlock_blocked_until","yandex_disk_sync_folder","yandex_disk_client_id","yandex_disk_access_token","keykeep_mcp_token"}) {
             String value = values.getString(PREFIX+field,null);
             if (value == null) continue;
             byte[] bytes = Base64.decode(value,Base64.DEFAULT);

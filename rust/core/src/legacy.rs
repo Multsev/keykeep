@@ -73,6 +73,8 @@ pub struct Entry {
 pub struct Vault {
     #[serde(default)]
     pub(crate) disk: crate::yandex::Account,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) mcp_token: String,
     pub folders: Vec<Folder>,
     pub entries: Vec<Entry>,
 }
@@ -138,6 +140,7 @@ impl Vault {
             }
         }
         Ok(Self {
+            mcp_token: String::new(),
             folders,
             entries,
             disk: Default::default(),

@@ -21,6 +21,7 @@ chrono = "0.4"
 kpdb = { package = "rust-kpdb", version = "0.6" }
 roxmltree = "0.20"
 hex = "0.4"
+httparse = "1"
 ureq = { version = "2.12", features = ["json"] }
 url = "2"
 

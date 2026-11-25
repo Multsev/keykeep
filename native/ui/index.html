@@ -44,4 +44,8 @@
 <label>Пароль базы KeePass<input type="password" autocomplete="off" id="diskPassword"></label>
 <label class="check"><input type="checkbox" id="diskConfirm"> Подтверждаю замену выбранной версии</label>
 <div class="field-actions"><button id="diskUpload">На Диск</button><button id="diskRestore">Восстановить на устройстве</button></div></div>
-<output id="diskMessage" role="status"></output></div></details><output id="settingsMessage" role="status"></output></div></dialog><output role="alert" id="message"></output><script src="disk.js"></script><script src="entry.js"></script><script src="app.js"></script></html>
+<output id="diskMessage" role="status"></output></div></details><details id="mcpSettings"><summary>Доступ через MCP</summary><div class="exchange-body">
+<output id="mcpState"></output><button id="mcpToggle">Включить MCP</button>
+<div id="mcpControls" hidden><label class="check"><input type="checkbox" id="mcpWrite"> Разрешить запросы на запись</label>
+<div class="field-actions"><button id="mcpCopy">Копировать команду подключения</button><button id="mcpRotate">Сменить токен</button></div></div>
+</div></details><output id="settingsMessage" role="status"></output></div></dialog><dialog id="mcpApproval"><div class="settings-body"><h2 id="mcpAction"></h2><p id="mcpDetails"></p><div class="field-actions"><button id="mcpDeny" autofocus>Отклонить</button><button id="mcpAllow">Разрешить один раз</button></div></div></dialog><output role="alert" id="message"></output><script src="disk.js"></script><script src="entry.js"></script><script src="app.js"></script><script src="mcp.js"></script></html>

@@ -82,6 +82,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         web.navigationDelegate = self
         window = NSWindow(contentRect: NSRect(x: 0,y: 0,width: 900,height: 600), styleMask: [.titled,.closable,.resizable,.miniaturizable], backing: .buffered, defer: false)
         window.title = "KeyKeep"; window.contentMinSize = NSSize(width: 400,height: 350)
+        NotificationCenter.default.addObserver(self,selector:#selector(lock),name:NSWindow.didMiniaturizeNotification,object:window)
         window.contentView = web; window.center()
         window.makeKeyAndOrderFront(nil)
         web.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
@@ -91,6 +92,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(lock), name: Notification.Name("com.apple.screenIsLocked"), object: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+    func applicationDidHide(_ notification: Notification) { lock() }
     @objc func lock() {
         guard let session = session else { return }
         prompt?.invalidate(); prompt = nil
@@ -143,6 +145,23 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             defer { kk_free_text(answer) }
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
         }
+        #if UI_TEST
+        if op == "testMcpPost" {
+            guard let token=args["token"] as? String, let rpc=args["rpc"] as? [String:Any] else {reply(["error":"Invalid fixture"]);return}
+            var request=URLRequest(url:URL(string:"http://127.0.0.1:8766/mcp")!)
+            request.httpMethod="POST"
+            request.setValue("Bearer "+token,forHTTPHeaderField:"Authorization")
+            request.setValue("application/json",forHTTPHeaderField:"Content-Type")
+            request.httpBody=try? JSONSerialization.data(withJSONObject:rpc)
+            URLSession.shared.dataTask(with:request){ data, _, _ in
+                DispatchQueue.main.async {
+                    guard let data, let body=try? JSONSerialization.jsonObject(with:data) else {reply(["error":"Invalid MCP response"]);return}
+                    reply(["value":body])
+                }
+            }.resume()
+            return
+        }
+        #endif
         if op == "diskConnect" {
             let result=core(["op":"diskAuthorize"])
             guard let raw=result["value"] as? String, let url=URL(string:raw),url.scheme=="https",url.host=="oauth.yandex.ru" else {reply(result);return}

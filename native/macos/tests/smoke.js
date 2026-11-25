@@ -78,4 +78,23 @@ if(el('gate').hidden || !el('message').textContent)throw Error('old PIN accepted
 el('pin').value='new-test-pin';el('enter').click();
 await until(()=>!el('vault').hidden && el('rows').children.length,'unlock new PIN');
 if(getComputedStyle(el('lock')).fontWeight!=='400')throw Error('button weight');
-return 'WKWebView: create, save, reopen, PIN rotation and button weight passed';
+el('settings').click();
+await until(()=>el('security').open && el('mcpState').textContent==='Выключен','MCP default');
+el('mcpSettings').open=true;el('mcpToggle').click();
+await until(()=>!el('mcpControls').hidden,'MCP start');
+const command=await call('mcpConnection');
+const token=command.match(/KEYKEEP_MCP_TOKEN='([A-Za-z0-9_-]+)'/)[1];
+const rpc=(name,args)=>call('testMcpPost',{token,rpc:{jsonrpc:'2.0',id:11,method:'tools/call',params:{name,arguments:args}}});
+const metadata=await rpc('list_vault_structure',{});
+const entry=metadata.result.structuredContent.entries[0];
+if(!entry || JSON.stringify(entry).includes('synthetic-only'))throw Error('MCP metadata');
+for(const allow of [false,true]){
+  const task=rpc('get_password_entry',{id:entry.id});
+  await until(()=>el('mcpApproval').open && el('mcpDetails').textContent.includes(entry.title),'MCP approval');
+  el(allow?'mcpAllow':'mcpDeny').click();
+  const reply=await task;
+  if(allow?reply.result?.structuredContent?.password!=='synthetic-only':!reply.error)throw Error('MCP decision');
+  await until(()=>!el('mcpApproval').open,'MCP decision closed');
+}
+el('mcpToggle').click();await until(()=>el('mcpControls').hidden,'MCP stop');el('dismiss').click();
+return 'WKWebView: create, save, reopen, PIN rotation, button weight and MCP HTTP approvals passed';

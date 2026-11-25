@@ -128,8 +128,25 @@ public final class MigrationProbe extends Instrumentation {
             waitFor("typeof el==='function' && !el('gate').hidden && el('enter').textContent==='Открыть'");
             evaluate("el('pin').value='123456';el('enter').click()");
             waitFor("!el('vault').hidden && el('rows').textContent.includes('MigrationFixture')");
+            evaluate("el('settings').click()");
+            waitFor("el('security').open && el('mcpState').textContent==='Выключен'");
+            evaluate("el('mcpSettings').open=true;el('mcpToggle').click()");
+            waitFor("!el('mcpControls').hidden");
+            try(java.net.Socket socket=new java.net.Socket("127.0.0.1",8766)){
+                socket.setSoTimeout(5000);
+                socket.getOutputStream().write(("POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}").getBytes("UTF-8"));
+                String status=new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream(),"UTF-8")).readLine();
+                if(!status.contains("401"))throw new AssertionError("MCP auth");
+            }
+            reopen(activity,i);
+            waitFor("typeof el==='function' && !el('gate').hidden && el('enter').textContent==='Открыть'");
+            try(java.net.Socket socket=new java.net.Socket("127.0.0.1",8766)){
+                throw new AssertionError("MCP remained open");
+            }catch(java.net.ConnectException expected){}
+            evaluate("el('pin').value='123456';el('enter').click()");
+            waitFor("!el('vault').hidden && el('rows').textContent.includes('MigrationFixture')");
             if(testFingerprint)fingerprint(activity,i);
-            result.putString("result","PASS migrated fields and history, Android create, save, reopen, rename, recursive delete, background lock and reopen"+(testFingerprint?", fingerprint enrollment, automatic and manual unlock, authenticated PIN reveal, cancel, PIN fallback, disable":""));
+            result.putString("result","PASS migrated fields and history, Android create, save, reopen, rename, recursive delete, background lock and reopen, MCP authentication and background stop"+(testFingerprint?", fingerprint enrollment, automatic and manual unlock, authenticated PIN reveal, cancel, PIN fallback, disable":""));
             finish(Activity.RESULT_OK,result);
         }catch(Throwable err){result.putString("result","FAIL "+err.toString());finish(Activity.RESULT_CANCELED,result);}
     }

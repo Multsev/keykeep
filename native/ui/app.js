@@ -40,6 +40,7 @@ function maybePromptFingerprint(){
 window.addEventListener('focus',maybePromptFingerprint);
 document.addEventListener('visibilitychange',maybePromptFingerprint);
 async function reset(promptOnOpen=false) {
+  window.clearMcp?.();
   pendingAutoUnlock=false;
   closeSettings();
   clearEntryExtras();
@@ -159,7 +160,7 @@ function closeSettings() {
   clearSettings();
 }
 el('security').addEventListener('close',clearSettings);
-on('settings','click',async()=>{clearSettings();el('security').showModal();await renderBio();await renderFiles();await renderDisk();});
+on('settings','click',async()=>{clearSettings();el('security').showModal();await renderBio();await renderFiles();await renderDisk();await renderMcp();});
 on('dismiss','click',closeSettings);
 on('showPin','click',async()=>{
   if(el('revealed').textContent){el('revealed').textContent='';return;}
