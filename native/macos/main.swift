@@ -136,7 +136,10 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                         let destination = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("window.png")
                         do { try png.write(to: destination); exit(0) } catch { exit(1) }
                     }
-                case .failure(let error): print(error.localizedDescription); exit(1)
+                case .failure(let error):
+                    let info = (error as NSError).userInfo
+                    print(info["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription)
+                    exit(1)
                 }
             }
         } catch { exit(1) }

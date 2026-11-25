@@ -9,13 +9,14 @@ import java.util.concurrent.*;
 /** UI acceptance on a dedicated emulator previously seeded with the Flutter repository. */
 public final class MigrationProbe extends Instrumentation {
     private WebView web;
-    private boolean testFingerprint, testImport, testErase, verifyErase;
+    private boolean testFingerprint, testImport, testErase, verifyErase, legacyPin;
     @Override public void onCreate(Bundle args){
         super.onCreate(args);
         testFingerprint=args!=null && "true".equals(args.getString("fingerprint"));
         testImport=args!=null && "true".equals(args.getString("firstImport"));
         testErase=args!=null && "true".equals(args.getString("eraseFixture"));
         verifyErase=args!=null && "true".equals(args.getString("verifyErase"));
+        legacyPin=args!=null && "true".equals(args.getString("legacyPin"));
         start();
     }
     private WebView find(View v){
@@ -89,6 +90,30 @@ public final class MigrationProbe extends Instrumentation {
             evaluate("el('pin').value='fixture-pin';el('enter').click()");
             waitFor("!el('vault').hidden && el('rows').textContent.includes('ImportFixture')");
         }finally{resolver.delete(uri,null,null);}
+    }
+    private boolean nativeText(String value){
+        android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+        if(root==null || !"com.max.keykeep_passwords".contentEquals(root.getPackageName()))return false;
+        for(android.view.accessibility.AccessibilityNodeInfo node:root.findAccessibilityNodeInfosByText(value))
+            if(value.contentEquals(node.getText()==null?"":node.getText()))return true;
+        return false;
+    }
+    private void testLegacyOwner()throws Exception{
+        waitFor("typeof el==='function' && ['Создать хранилище','Открыть'].includes(el('enter').textContent)");
+        for(String action:new String[]{"credential-cancel","credential-accept"}){
+            evaluate("el('pin').value=el('repeat').value='fixture-pin';el('enter').click()");
+            waitFor("!el('vault').hidden");
+            evaluate("el('settings').click();el('showPin').click()");
+            promptAction(action);
+            if(action.endsWith("accept")){
+                for(int i=0;i<160 && !nativeText("fixture-pin");i++)Thread.sleep(100);
+                if(!nativeText("fixture-pin"))throw new AssertionError("Authenticated PIN dialog missing");
+                for(int i=0;i<120 && nativeText("fixture-pin");i++)Thread.sleep(100);
+                if(nativeText("fixture-pin"))throw new AssertionError("PIN remained visible");
+            }
+            waitFor("typeof exists!=='undefined' && exists && !el('gate').hidden && el('enter').textContent==='Открыть'");
+            if(nativeText("fixture-pin"))throw new AssertionError("Unexpected PIN disclosure");
+        }
     }
     private void eraseFixture()throws Exception{
         android.content.Context ctx=getTargetContext();
@@ -208,6 +233,10 @@ public final class MigrationProbe extends Instrumentation {
             Intent i=new Intent().setClassName("com.max.keykeep_passwords","com.max.keykeep_passwords.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity activity=startActivitySync(i);
             runOnMainSync(()->web=find(activity.getWindow().getDecorView()));
+            if(legacyPin){
+                testLegacyOwner();result.putString("result","PASS legacy credential cancel, authenticated PIN reveal, expiry and vault lock");
+                finish(Activity.RESULT_OK,result);return;
+            }
             if(verifyErase){
                 waitFor("typeof el==='function' && exists && !el('gate').hidden");
                 evaluate("el('pin').value='fresh-test';el('enter').click()");

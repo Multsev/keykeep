@@ -29,6 +29,11 @@ public final class MainActivity extends Activity {
     private boolean foreground;
     private boolean reloadOnResume;
     private CancellationSignal pending;
+    private static final int OWNER_CREDENTIAL=9301;
+    private OwnerPinRequest ownerRequest;
+    private boolean ownerApproved, skipAutoPrompt;
+    private android.app.AlertDialog pinDialog;
+
     private String oauthCallback;
     private void receiveOAuth(Intent intent){
         android.net.Uri uri=intent.getData();
@@ -39,7 +44,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onNewIntent(Intent intent){
         super.onNewIntent(intent);receiveOAuth(intent);
-        if(web!=null && foreground)web.evaluateJavascript("window.keykeepOAuthReady?.()",null);
+        if(web!=null && foreground)web.evaluateJavascript("window.keykeepOAuthReady && window.keykeepOAuthReady()",null);
     }
     private ExchangeFiles exchange;
     private long clipboardExpiry;
@@ -71,6 +76,7 @@ public final class MainActivity extends Activity {
                 try{if(!VaultBridge.initializeDevice(handle,key))throw new IllegalStateException();}
                 finally{Arrays.fill(key,(byte)0);}
             }
+            if(Build.VERSION.SDK_INT<30)OwnerPinRequest.removeKey();
             web = new WebView(this);
             web.setBackgroundColor(Color.TRANSPARENT);
             web.getSettings().setJavaScriptEnabled(true);
@@ -186,7 +192,8 @@ public final class MainActivity extends Activity {
                 break;
             case "createFromKdbx":case "migrateAndroid": error(id,"Недоступно");return;
             case "bioStatus":
-                value(id,new JSONObject().put("available",biometricAvailable()).put("enabled",keys.has(DeviceKeys.BIO)).put("autoPrompt",keys.has(DeviceKeys.BIO) && getPreferences(MODE_PRIVATE).getBoolean("bioAutoPrompt",true)));return;
+                boolean canAutoPrompt=!skipAutoPrompt;skipAutoPrompt=false;
+                value(id,new JSONObject().put("available",biometricAvailable()).put("enabled",keys.has(DeviceKeys.BIO)).put("autoPrompt",canAutoPrompt && keys.has(DeviceKeys.BIO) && getPreferences(MODE_PRIVATE).getBoolean("bioAutoPrompt",true)));return;
             case "setBioAutoPrompt":
                 if(!keys.has(DeviceKeys.BIO) || !core(op("status")).getJSONObject("value").getBoolean("open")){
                     error(id,"Откройте хранилище и включите вход по отпечатку");return;
@@ -221,7 +228,22 @@ public final class MainActivity extends Activity {
     private void cancelPrompt() { if(pending!=null)pending.cancel();pending=null; }
     private void confirmOwner(int id) throws Exception {
         if (pending!=null) {error(id,"Подтверждение уже открыто");return;}
-        if (Build.VERSION.SDK_INT < 30) { error(id,"Для системного подтверждения PIN требуется Android 11");return; }
+        if (Build.VERSION.SDK_INT < 30) {
+            if(ownerRequest!=null){error(id,"Подтверждение уже открыто");return;}
+            Intent intent=getSystemService(KeyguardManager.class).createConfirmDeviceCredentialIntent(
+                "Показать мастер-PIN KeyKeep","Подтвердите блокировку экрана устройства");
+            if(intent==null){error(id,"Настройте блокировку экрана Android для просмотра PIN");return;}
+            byte[] pin=VaultBridge.authenticatedPin(handle);
+            if(pin==null){error(id,"Хранилище заблокировано");return;}
+            try{
+                OwnerPinRequest request=OwnerPinRequest.prepare(pin);
+                ownerRequest=request;skipAutoPrompt=true;
+                startActivityForResult(intent,OWNER_CREDENTIAL);
+                web.postDelayed(()->{if(ownerRequest==request)discardOwnerRequest();},OwnerPinRequest.TIMEOUT_MS);
+            }catch(Exception e){discardOwnerRequest();throw e;}
+            finally{Arrays.fill(pin,(byte)0);}
+            return;
+        }
         CancellationSignal signal=new CancellationSignal();pending=signal;
         BiometricPrompt prompt=new BiometricPrompt.Builder(this).setTitle("Показать мастер-PIN")
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.DEVICE_CREDENTIAL).build();
@@ -261,11 +283,40 @@ public final class MainActivity extends Activity {
             @Override public void onAuthenticationError(int code,CharSequence message){if(pending==signal){pending=null;error(id,"Подтверждение отменено");}}
         });
     }
+    private void discardOwnerRequest(){
+        if(ownerRequest!=null)ownerRequest.discard();
+        ownerRequest=null;ownerApproved=false;
+    }
+    @Override protected void onPostResume(){
+        super.onPostResume();
+        if(!ownerApproved || ownerRequest==null)return;
+        try{
+            byte[] pin=ownerRequest.recover();
+            try{
+                TextView text=new TextView(this);
+                text.setPadding(32,20,32,20);text.setText(new String(pin,StandardCharsets.UTF_8));
+                android.app.AlertDialog dialog=new android.app.AlertDialog.Builder(this)
+                    .setTitle("Мастер-PIN KeyKeep").setView(text).setPositiveButton("Закрыть",null).create();
+                dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                dialog.setOnDismissListener(d->{text.setText("");if(pinDialog==dialog)pinDialog=null;});
+                pinDialog=dialog;dialog.show();web.postDelayed(dialog::dismiss,10000);
+            }finally{Arrays.fill(pin,(byte)0);}
+        }catch(Exception e){
+            android.widget.Toast.makeText(this,"Просмотр PIN завершён",android.widget.Toast.LENGTH_SHORT).show();
+        }finally{discardOwnerRequest();}
+    }
     @Override protected void onActivityResult(int request,int code,Intent data){
         super.onActivityResult(request,code,data);
+        if(request==OWNER_CREDENTIAL){
+            if(code==RESULT_OK && ownerRequest!=null)ownerApproved=true;
+            else discardOwnerRequest();
+            // Rebuild the gate even if a vendor credential window did not stop this activity.
+            if(handle!=0)try{core(op("lock"));reloadOnResume=true;}catch(Exception ignored){}
+            return;
+        }
         if(exchange!=null && request>=ExchangeFiles.DATABASE && request<=ExchangeFiles.EXPORT){
             exchange.result(request,code==RESULT_OK && data!=null?data.getData():null);
-            web.evaluateJavascript("window.refreshStartupFiles?.()",null);
+            web.evaluateJavascript("window.refreshStartupFiles && window.refreshStartupFiles()",null);
         }
     }
     @Override protected void onResume(){
@@ -277,12 +328,12 @@ public final class MainActivity extends Activity {
         }
     }
     @Override protected void onStop(){
-        foreground=false;cancelPrompt();
+        foreground=false;cancelPrompt();if(pinDialog!=null)pinDialog.dismiss();
         if(handle!=0)try{core(op("lock"));web.setVisibility(android.view.View.INVISIBLE);web.loadUrl("about:blank");reloadOnResume=true;}catch(Exception ignored){}
         super.onStop();
     }
     @Override protected void onDestroy(){
-        foreground=false;cancelPrompt();if(web!=null)web.destroy();if(handle!=0)VaultBridge.close(handle);handle=0;super.onDestroy();
+        foreground=false;cancelPrompt();discardOwnerRequest();if(web!=null)web.destroy();if(handle!=0)VaultBridge.close(handle);handle=0;super.onDestroy();
     }
     @Override public void onBackPressed(){
         if(web!=null)web.evaluateJavascript("window.keykeepBack && window.keykeepBack()",result->{if(!"true".equals(result))MainActivity.super.onBackPressed();});

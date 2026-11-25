@@ -11,7 +11,7 @@ function actionButton(title, run) {
 }
 
 function clearEntryExtras() {
-  for (const id of ['customList', 'revisions']) el(id).replaceChildren();
+  for (const id of ['customList', 'revisions']) setChildren(el(id));
   el('custom').open = el('history').open = false;
   el('password').type = 'password';
   el('revealPassword').textContent = 'Показать пароль';
@@ -103,5 +103,5 @@ function renderEntryExtras(item) {
   el('custom').open=item.customFields.length>0;
   const history=item.history||[];
   el('history').hidden=!history.length;
-  el('revisions').replaceChildren(...history.slice().reverse().map(renderRevision));
+  setChildren(el('revisions'), ...history.slice().reverse().map(renderRevision));
 }

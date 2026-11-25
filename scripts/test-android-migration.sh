@@ -31,6 +31,10 @@ probe_args=()
 if [[ ${2:-} == --fingerprint ]]; then
     [[ $serial == emulator-* ]] || { echo "Fingerprint simulation requires an emulator" >&2; exit 1; }
     probe_args=(-e fingerprint true)
+elif [[ ${2:-} == --legacy-pin ]]; then
+    avd=$("$adb" -s "$serial" emu avd name | tr -d '\r' | head -1)
+    [[ $avd == keykeep-qa-api28 || $avd == keykeep-qa-api29 ]] || { echo "Requires dedicated legacy QA emulator" >&2; exit 1; }
+    probe_args=(-e legacyPin true)
 elif [[ ${2:-} == --first-import ]]; then
     probe_args=(-e firstImport true)
 elif [[ ${2:-} == --erase-fixture ]]; then
@@ -43,6 +47,26 @@ fi
 while IFS= read -r line; do
     echo "$line" | tee -a "$stage/result"
     case "$line" in
+        *keykeepPrompt=credential-*)
+            for ((i=0;i<80;i++)); do
+                focus=$("$adb" -s "$serial" shell dumpsys window </dev/null | sed -n '/mCurrentFocus=/p')
+                if [[ $focus == *ConfirmLock* || $focus == *ConfirmDeviceCredential* ]]; then
+                    sleep 0.6
+                    if [[ $line == *credential-cancel* ]]; then
+                        "$adb" -s "$serial" shell input keyevent 4 </dev/null
+                        sleep 0.4
+                        if "$adb" -s "$serial" shell dumpsys window </dev/null | grep "mCurrentFocus=" | grep -q ConfirmLock; then
+                            "$adb" -s "$serial" shell input keyevent 4 </dev/null
+                        fi
+                    else
+                        "$adb" -s "$serial" shell input text 772255 </dev/null
+                        "$adb" -s "$serial" shell input keyevent 66 </dev/null
+                    fi
+                    break
+                fi
+                sleep 0.2
+            done
+            ;;
         *keykeepPrompt=finger*|*keykeepPrompt=cancel*)
             for ((i=0;i<60;i++)); do
                 sensor=$("$adb" -s "$serial" shell dumpsys fingerprint </dev/null)
@@ -59,7 +83,7 @@ while IFS= read -r line; do
             ;;
     esac
 done
-grep -Eq 'result=PASS (migrated|first import|erasure)' "$stage/result"
+grep -Eq 'result=PASS (migrated|first import|erasure|legacy credential)' "$stage/result"
 
 if [[ ${2:-} == --erase-fixture ]]; then
     "$adb" -s "$serial" shell am force-stop --user "$user" com.max.keykeep_passwords

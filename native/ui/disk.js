@@ -5,7 +5,7 @@ function clearDiskPreview(){
   el('diskConfirm').checked=false;
   el('diskRemote').textContent=el('diskMessage').textContent='';
   el('diskPassword').value='';
-  el('diskVersion').replaceChildren(new Option('Текущая база',''));
+  setChildren(el('diskVersion'), new Option('Текущая база',''));
 }
 async function renderDisk(){
   const state=await call('diskStatus');
@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   act('diskDisconnect',async()=>{await call('diskDisconnect');clearDiskPreview();await renderDisk();});
   act('diskList',async()=>{
     await call('diskFolders');const {items}=await awaitDisk();
-    el('diskFolderNames').replaceChildren(...items.map(i=>new Option(i.name,i.name)));
+    setChildren(el('diskFolderNames'), ...items.map(i=>new Option(i.name,i.name)));
     el('diskMessage').textContent='Доступно папок: '+items.length;
   });
   act('diskInspect',async()=>{
@@ -55,7 +55,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     items.sort((a,b)=>String(b.modified).localeCompare(String(a.modified)));
     const local=(await call('diskStatus')).localModified;
     el('diskRemote').textContent='Локальная база: '+new Date(local*1000).toLocaleString('ru-RU')+'. '+(remote?'Облачная база: '+new Date(remote.modified).toLocaleString('ru-RU')+', '+remote.size+' Б.':'Облачной базы ещё нет.');
-    el('diskVersion').replaceChildren(new Option('Текущая база',''),...items.map(i=>new Option(i.name,i.name)));
+    setChildren(el('diskVersion'), new Option('Текущая база',''),...items.map(i=>new Option(i.name,i.name)));
     diskExpected=remote;el('diskMessage').textContent='';
   });
   for(const id of ['diskClient','diskFolder'])el(id).addEventListener('input',clearDiskPreview);

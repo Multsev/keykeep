@@ -1,5 +1,10 @@
 'use strict';
 const el = id => document.getElementById(id);
+// Android 9 ships with a WebView that predates Element.replaceChildren.
+function setChildren(element, ...children) {
+  element.textContent = '';
+  element.append(...children);
+}
 const keys = ['title','username','password','website','note'];
 let exists = false, folder = 'root', current = null, listing = 0;
 let requestId = 0;
@@ -18,7 +23,8 @@ function androidRequest(request) {
 }
 async function call(op, args = {}) {
   const request = JSON.stringify({op,...args});
-  const reply = window.webkit?.messageHandlers?.vault ? await window.webkit.messageHandlers.vault.postMessage(request) : await androidRequest(request);
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.vault;
+  const reply = bridge ? await bridge.postMessage(request) : await androidRequest(request);
   const result = JSON.parse(reply);
   if (result.error) throw new Error(result.error);
   return result.value;
@@ -40,7 +46,7 @@ function maybePromptFingerprint(){
 window.addEventListener('focus',maybePromptFingerprint);
 document.addEventListener('visibilitychange',maybePromptFingerprint);
 async function reset(promptOnOpen=false) {
-  window.clearMcp?.();
+  if(window.clearMcp)window.clearMcp();
   pendingAutoUnlock=false;
   closeSettings();
   clearEntryExtras();
@@ -51,7 +57,7 @@ async function reset(promptOnOpen=false) {
   ++listing;
   document.querySelectorAll('form').forEach(f => f.reset());
   el('search').value = ''; el('message').textContent = '';
-  el('tree').replaceChildren(); el('rows').replaceChildren(); current = null; folder = 'root';
+  setChildren(el('tree')); setChildren(el('rows')); current = null; folder = 'root';
   el('editor').hidden = true; el('vault').hidden = true; el('gate').hidden = false;
   exists = (await call('status')).exists;
   el('repeatLabel').hidden = exists; el('startupExchange').hidden = exists;
@@ -93,11 +99,11 @@ async function refresh() {
   }
   append(data.folders.find(f=>f.id==='root'),0);
   const selectedFolder = el('entryFolder').value;
-  el('entryFolder').replaceChildren(...options);
+  setChildren(el('entryFolder'), ...options);
   el('entryFolder').value = selectedFolder || folder;
-  el('tree').replaceChildren(...tree);
-  el('rows').replaceChildren(...data.entries.map(e=>{
-    const b=row(e.title,async()=>{edit(await call('get',{id:e.id}));await refresh();},current?.id===e.id);
+  setChildren(el('tree'), ...tree);
+  setChildren(el('rows'), ...data.entries.map(e=>{
+    const b=row(e.title,async()=>{edit(await call('get',{id:e.id}));await refresh();},current && current.id===e.id);
     const sub=document.createElement('small');sub.textContent=e.username;b.append(sub);return b;
   }));
 }
@@ -196,7 +202,8 @@ on('bioUnlock','click',async()=>{
 on('newFolder','submit',async()=>{folder=await call('addFolder',{name:el('folderName').value,parent:folder});el('newFolder').reset();screen('entries');await refresh();});
 on('add','click',()=>edit());
 on('editor','submit',async()=>{
-  const values={folderId:el('entryFolder').value,customFields:collectFields(),...Object.fromEntries(keys.map(k=>[k,el(k).value]))};
+  const values={folderId:el('entryFolder').value,customFields:collectFields()};
+  for(const key of keys)values[key]=el(key).value;
   const id=await call('save',{id:current.id,values,time:new Date().toISOString()});
   edit(await call('get',{id}));await refresh();
 });
@@ -217,7 +224,7 @@ document.addEventListener('keydown',e=>{
   if(el('vault').hidden)return;
   if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(e.key==='n')edit();else el('search').focus();}
   const b=e.target.closest('nav button');
-  if(b && ['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();(e.key==='ArrowUp'?b.previousElementSibling:b.nextElementSibling)?.focus();}
+  if(b && ['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const next=e.key==='ArrowUp'?b.previousElementSibling:b.nextElementSibling;if(next)next.focus();}
 });
 reset(true).catch(()=>{el('message').textContent='Не удалось открыть локальное хранилище';});
 
@@ -270,7 +277,7 @@ on('acceptDelete','click',async()=>{
 on('folderActions','click',async()=>{
   const info=await call('folderInfo',{id:folder});
   el('editFolderName').value=info.folder.name;
-  el('editParent').replaceChildren(...info.choices.map(f=>new Option(f.name,f.id)));
+  setChildren(el('editParent'), ...info.choices.map(f=>new Option(f.name,f.id)));
   el('editParent').value=info.folder.parentId;
   el('folderDialog').showModal();
 });
