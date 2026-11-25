@@ -32,6 +32,42 @@ public final class MigrationProbe extends Instrumentation {
         for(int i=0;i<120;i++){if("true".equals(evaluate(condition)))return;Thread.sleep(200);}
         throw new AssertionError("Timed out at "+condition+"; gate="+evaluate("typeof el==='function' && [el('gate').hidden,el('bioUnlock').hidden,el('bioUnlock').disabled,pendingAutoUnlock,document.hidden,document.hasFocus(),bioState.enabled,bioState.autoPrompt,el('settingsMessage').textContent,el('message').textContent].join('|')"));
     }
+    private void editorWithKeyboard()throws Exception{
+        if(android.os.Build.VERSION.SDK_INT<30)return;
+        final int[] originalZoom=new int[1];
+        runOnMainSync(()->{
+            originalZoom[0]=web.getSettings().getTextZoom();
+            web.getSettings().setTextZoom(200);
+        });
+        try{
+            waitFor("document.documentElement.scrollWidth<=innerWidth+1 && el('detail').scrollWidth<=el('detail').clientWidth+1");
+            evaluate("el('note').scrollIntoView({block:'center'})");
+            String point=evaluate("(()=>{const r=el('note').getBoundingClientRect();return [(r.left+r.width/2)*devicePixelRatio,(r.top+r.height/2)*devicePixelRatio]})()");
+            org.json.JSONArray xy=new org.json.JSONArray(point);
+            int[] origin=new int[2];
+            runOnMainSync(()->web.getLocationOnScreen(origin));
+            float x=origin[0]+(float)xy.getDouble(0),y=origin[1]+(float)xy.getDouble(1);
+            long down=android.os.SystemClock.uptimeMillis();
+            for(int action:new int[]{MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP}){
+                MotionEvent event=MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,x,y,0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try{sendPointerSync(event);}finally{event.recycle();}
+            }
+            waitFor("document.activeElement===el('note')");
+            boolean[] visible={false};
+            for(int i=0;i<60 && !visible[0];i++){
+                runOnMainSync(()->visible[0]=web.getRootWindowInsets().isVisible(WindowInsets.Type.ime()));
+                if(!visible[0])Thread.sleep(100);
+            }
+            if(!visible[0])throw new AssertionError("Soft keyboard did not appear");
+            waitFor("el('note').getBoundingClientRect().top < visualViewport.height + visualViewport.offsetTop && el('note').getBoundingClientRect().bottom > visualViewport.offsetTop");
+            sendStringSync("layout");
+            waitFor("el('note').value.endsWith('layout')");
+            runOnMainSync(()->web.getWindowInsetsController().hide(WindowInsets.Type.ime()));
+        }finally{
+            runOnMainSync(()->web.getSettings().setTextZoom(originalZoom[0]));
+        }
+    }
     private void reopen(Activity activity,Intent intent)throws Exception{
         runOnMainSync(()->activity.startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)));
         waitFor("document.location.href==='about:blank' || typeof el==='undefined'");
@@ -104,7 +140,9 @@ public final class MigrationProbe extends Instrumentation {
             waitFor("el('revisions').textContent.includes('old')");
             evaluate("window.testName='Probe '+Date.now();el('folderName').value=testName;el('newFolder').requestSubmit()");
             waitFor("Array.from(el('tree').children).some(b=>b.textContent.includes(testName))");
-            evaluate("window.testFolder=folder;el('add').click();el('title').value=testName;el('username').value='qa';el('password').value='synthetic-entry';el('editor').requestSubmit()");
+            evaluate("window.testFolder=folder;el('add').click()");
+            editorWithKeyboard();
+            evaluate("el('title').value=testName;el('username').value='qa';el('password').value='synthetic-entry';el('editor').requestSubmit()");
             waitFor("current?.title===testName && current.id.length>0");
             evaluate("el('lock').click()");
             waitFor("!el('gate').hidden && el('vault').hidden");
@@ -146,7 +184,7 @@ public final class MigrationProbe extends Instrumentation {
             evaluate("el('pin').value='123456';el('enter').click()");
             waitFor("!el('vault').hidden && el('rows').textContent.includes('MigrationFixture')");
             if(testFingerprint)fingerprint(activity,i);
-            result.putString("result","PASS migrated fields and history, Android create, save, reopen, rename, recursive delete, background lock and reopen, MCP authentication and background stop"+(testFingerprint?", fingerprint enrollment, automatic and manual unlock, authenticated PIN reveal, cancel, PIN fallback, disable":""));
+            result.putString("result","PASS migrated fields and history, Android create, save, reopen, rename, recursive delete, zoomed editor and soft keyboard, background lock and reopen, MCP authentication and background stop"+(testFingerprint?", fingerprint enrollment, automatic and manual unlock, authenticated PIN reveal, cancel, PIN fallback, disable":""));
             finish(Activity.RESULT_OK,result);
         }catch(Throwable err){result.putString("result","FAIL "+err.toString());finish(Activity.RESULT_CANCELED,result);}
     }
