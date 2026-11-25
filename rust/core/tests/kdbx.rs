@@ -31,6 +31,33 @@ fn preserves_nested_groups_protection_layout_history_and_keyfile() {
 }
 
 #[test]
+fn repeated_exports_preserve_flutter_identity() {
+    let folders = r#"[{"id":"root","name":"Все записи"},{"id":"1700000000000000","name":"Test"}]"#;
+    let entries = r#"[{"id":"AAECAwQFBgcICQoLDA0ODw==","folderId":"1700000000000000","title":"Imported","username":"demo","password":"fixture","updatedAt":"2026-01-01"},{"id":"1700000000000000","folderId":"1700000000000000","title":"Local","username":"demo","password":"fixture","updatedAt":"2026-01-01"}]"#;
+    let original = Vault::from_android(Some(folders), Some(entries)).unwrap();
+    let roundtrip = |version| {
+        let bytes = kdbx::export_version(&original, "fixture", None, version).unwrap();
+        kdbx::import(&bytes, "fixture", None).unwrap()
+    };
+    let first = roundtrip(3);
+    let next = roundtrip(4);
+    assert!(first.folders == next.folders);
+    assert!(first.entries == next.entries);
+    assert!(
+        first
+            .entries
+            .iter()
+            .any(|e| e.id == "00010203-0405-0607-0809-0a0b0c0d0e0f")
+    );
+    assert!(
+        first
+            .entries
+            .iter()
+            .all(|e| e.id != first.folders[1].id && e.values.folder_id == first.folders[1].id)
+    );
+}
+
+#[test]
 #[ignore = "requires KeePassXC CLI, configured through KEEPASSXC_CLI"]
 fn exchange_with_keepassxc() {
     let cli = env::var("KEEPASSXC_CLI").unwrap();

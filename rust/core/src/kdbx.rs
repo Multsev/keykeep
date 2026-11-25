@@ -171,6 +171,28 @@ fn group_v3(source: GroupRef<'_>, now: chrono::DateTime<chrono::Utc>) -> kpdb::G
     group
 }
 
+// Flutter stores imported KeePass UUIDs as Base64 and locally created IDs as text.
+pub(crate) fn exchange_id(kind: &str, id: &str) -> Uuid {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use sha2::{Digest, Sha256};
+    if let Ok(uuid) = Uuid::parse_str(id) {
+        return uuid;
+    }
+    if let Ok(bytes) = STANDARD.decode(id)
+        && let Ok(uuid) = Uuid::from_slice(&bytes)
+    {
+        return uuid;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"KeyKeep/legacy-id/v1\0");
+    hash.update(kind.as_bytes());
+    hash.update([0]);
+    hash.update(id.as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash.finalize()[..16]);
+    uuid::Builder::from_custom_bytes(bytes).into_uuid()
+}
+
 fn write_group(
     vault: &Vault,
     id: &str,
@@ -181,7 +203,7 @@ fn write_group(
         return Err(TOO_DEEP);
     }
     for entry in vault.entries.iter().filter(|e| e.values.folder_id == id) {
-        let uuid = Uuid::parse_str(&entry.id).unwrap_or_else(|_| Uuid::new_v4());
+        let uuid = exchange_id("entry", &entry.id);
         let mut item = group.add_entry_with_id(uuid.into()).map_err(|_| INVALID)?;
         let v = &entry.values;
         for (name, value) in [
@@ -222,7 +244,7 @@ fn write_group(
         .iter()
         .filter(|f| f.id != "root" && f.parent_id == id)
     {
-        let uuid = Uuid::parse_str(&folder.id).unwrap_or_else(|_| Uuid::new_v4());
+        let uuid = exchange_id("folder", &folder.id);
         let mut child = group.add_group_with_id(uuid.into()).map_err(|_| INVALID)?;
         child.name.clone_from(&folder.name);
         write_group(vault, &folder.id, child, depth + 1)?;
