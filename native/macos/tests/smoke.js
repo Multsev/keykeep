@@ -132,8 +132,8 @@ if(benchCount>0){
   el('lock').click();
   if(!document.body.classList.contains('metal-sealed') || getComputedStyle(el('vault')).visibility!=='hidden')throw Error('delayed lock');
   await until(()=>el('vault').hidden && !el('gate').hidden && !el('access').hidden,'lock finished');
-  await new Promise(resolve=>setTimeout(resolve,800));
-  if(document.querySelector('.metal-surface') || document.getAnimations().some(a=>a.playState==='running'))throw Error('idle motion');
+  await until(()=>!document.querySelector('.metal-surface') &&
+    !document.getAnimations().some(a=>a.playState==='running'),'idle motion');
   await call('metalPreference',{level:original});metal.apply(original);
   return writeTiming;
 }

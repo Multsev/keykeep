@@ -7,14 +7,15 @@ fn tool(name: &str, args: Value) -> Value {
 fn client(port: u16, token: &str, msg: Value) -> thread::JoinHandle<(u16, Value)> {
     let token = token.to_owned();
     thread::spawn(move || {
+        let method = msg["params"]["name"].as_str().unwrap_or("unknown");
         let call = ureq::post(&format!("http://127.0.0.1:{port}/mcp"))
             .timeout(Duration::from_secs(5))
             .set("Authorization", &format!("Bearer {token}"))
-            .send_json(msg);
+            .send_json(&msg);
         match call {
             Ok(r) => (r.status(), r.into_json().unwrap_or(Value::Null)),
             Err(ureq::Error::Status(s, _)) => (s, Value::Null),
-            Err(e) => panic!("transport: {e}"),
+            Err(e) => panic!("transport calling {method}: {e}"),
         }
     })
 }
@@ -34,6 +35,31 @@ fn pump(s: &mut Session, port: u16, token: &str, msg: Value, allow: Option<bool>
     assert_eq!(approvals, usize::from(allow.is_some()));
     worker.join().unwrap()
 }
+#[test]
+fn rejected_request_returns_401_while_body_is_still_arriving() {
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    let server = Transport::bind(0, "fixture-token").unwrap();
+    let mut stream = TcpStream::connect(("127.0.0.1", server.port())).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stream.write_all(b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer incorrect\r\nContent-Length: 65536\r\n\r\n").unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut status = String::new();
+    reader.read_line(&mut status).unwrap();
+    assert_eq!(status, "HTTP/1.1 401 Unauthorized\r\n");
+    reader.get_mut().write_all(&[0; 65536]).unwrap();
+    reader
+        .get_mut()
+        .shutdown(std::net::Shutdown::Write)
+        .unwrap();
+    let mut headers = String::new();
+    reader.read_to_string(&mut headers).unwrap();
+    assert!(headers.ends_with("\r\n\r\n"));
+    assert!(server.poll().is_none());
+}
+
 #[test]
 fn loopback_approval_modes_rotation_and_lock() {
     let dir = tempfile::tempdir().unwrap();

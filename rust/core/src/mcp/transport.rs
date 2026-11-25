@@ -131,7 +131,7 @@ impl Transport {
                                             Err(_) => respond(&mut stream, 403, None),
                                         }
                                     }
-                                    Err(code) => respond(&mut stream, code, None),
+                                    Err(code) => reject(&mut stream, code),
                                 }
                             }
                             workers.fetch_sub(1, Ordering::AcqRel);
@@ -234,6 +234,30 @@ fn receive(stream: &mut TcpStream, token: &str) -> Result<Value, u16> {
         read(&mut bytes)?;
     }
     serde_json::from_slice(&bytes[offset..offset + length]).map_err(|_| 400)
+}
+// A rejected request can still be arriving. Send FIN before draining so clients
+// can read the HTTP error even if closing with unread input would reset TCP.
+fn reject(stream: &mut TcpStream, status: u16) {
+    respond(stream, status, None);
+    if stream.shutdown(std::net::Shutdown::Write).is_err() {
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_millis(250);
+    let mut remaining = 256 * 1024;
+    let mut buffer = [0; 4096];
+    while remaining > 0 {
+        let Some(timeout) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        if stream.set_read_timeout(Some(timeout)).is_err() {
+            break;
+        }
+        let limit = remaining.min(buffer.len());
+        match stream.read(&mut buffer[..limit]) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => remaining -= n,
+        }
+    }
 }
 fn respond(stream: &mut TcpStream, status: u16, body: Option<Value>) {
     let body = Zeroizing::new(body.map(|b| b.to_string()).unwrap_or_default());
