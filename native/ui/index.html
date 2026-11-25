@@ -15,7 +15,7 @@
 <dialog id="trashQuestion" aria-labelledby="trashText"><p id="trashText"></p><p id="trashPath"></p><div class="field-actions"><button id="trashCancel" autofocus>Отмена</button><button id="trashConfirm">В Корзину</button></div></dialog>
 <output id="catalogMessage" role="alert"></output></aside>
 <dialog id="recoveryDialog" aria-labelledby="recoveryTitle"><div class="settings-body"><header><h2 id="recoveryTitle">Восстановить из Корзины</h2><button type="button" id="recoveryClose" aria-label="Закрыть">×</button></header><div id="recoveryList"></div><output id="recoveryMessage" role="status"></output></div></dialog>
-<main id="gate"><button id="emptyCreate" type="button" hidden>＋ Создать хранилище</button><form id="access" hidden><h1 id="activeVaultName">KeyKeep</h1><label>Мастер-PIN<input id="pin" type="password" required autocomplete="off"></label><label id="repeatLabel">Повторите PIN<input id="repeat" type="password" autocomplete="off"></label><details id="startupExchange" hidden><summary>Импортировать базу KeePass</summary><div class="exchange-body">
+<main id="gate"><button id="emptyCreate" type="button" hidden>＋ Создать хранилище</button><form id="access" hidden><h1 id="activeVaultName">KeyKeep</h1><label>Мастер-PIN<input id="pin" type="password" required autocomplete="off" aria-describedby="createPinHint"><small id="createPinHint" class="pin-hint" role="status" hidden>Слабый PIN</small></label><label id="repeatLabel">Повторите PIN<input id="repeat" type="password" autocomplete="off"></label><details id="startupExchange" hidden><summary>Импортировать базу KeePass</summary><div class="exchange-body">
 <div><button id="startupDb" type="button">Выбрать базу KDBX</button> <span id="startupDbName"></span></div>
 <div><button id="startupKey" type="button">Ключевой файл</button> <span id="startupKeyName"></span></div>
 <button id="startupClear" type="button">Сбросить выбор файлов</button>
@@ -42,7 +42,7 @@
 <header><h2 id="securityHeading">Настройки</h2><button id="dismiss">Закрыть</button></header>
 <div class="settings-body"><div class="inline"><button id="showPin">Посмотреть PIN</button><output id="revealed" aria-live="polite"></output></div>
 <label>Текущий PIN<input type="password" id="oldPin" autocomplete="off"></label>
-<form id="change"><label>Новый PIN<input type="password" id="newPin" autocomplete="off" required minlength="6"></label><label>Повторите новый PIN<input type="password" id="confirmPin" autocomplete="off" required></label>
+<form id="change"><label>Новый PIN<input type="password" id="newPin" autocomplete="off" required aria-describedby="changePinHint"><small id="changePinHint" class="pin-hint" role="status" hidden>Слабый PIN</small></label><label>Повторите новый PIN<input type="password" id="confirmPin" autocomplete="off" required></label>
 <button>Изменить PIN</button></form><div class="fingerprint"><h3>Вход по отпечатку</h3><p id="bioInfo"></p><button id="bioToggle">Включить</button><label class="check" id="autoPromptLabel" hidden><input type="checkbox" id="autoPrompt"> Запрашивать отпечаток при открытии</label></div><details id="exchange"><summary>Обмен с KeePass</summary>
 <div class="exchange-body"><label>Пароль базы KeePass<input id="dbPassword" type="password" autocomplete="off"></label>
 <div><button id="pickDb">Выбрать базу KDBX</button> <span id="dbName"></span></div>

@@ -528,8 +528,8 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             return
         }
         if op == "changePin" && fingerprint.enabled {
-            guard let next = args["newPin"] as? String, next.unicodeScalars.count >= 6 else {
-                reply(["error":"Введите минимум 6 символов"]); return
+            guard let next = args["newPin"] as? String, !next.isEmpty else {
+                reply(["error":"Введите PIN"]); return
             }
             do { try fingerprint.disable() } catch { reply(["error":"Не удалось обновить настройки Touch ID"]); return }
         }

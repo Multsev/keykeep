@@ -148,3 +148,6 @@ dialog{max-height:85dvh}
 #mcpPane #mcpState{display:flex;align-items:center;gap:.45rem}
 #mcpPane #mcpState::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--muted)}
 #mcpPane #mcpState[data-running=true]::before{background:#489563}
+
+.pin-hint{font-size:.85rem;color:#875100}
+@media(prefers-color-scheme:dark){.pin-hint{color:#efbf75}}

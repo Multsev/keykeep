@@ -67,6 +67,7 @@ async function reset(promptOnOpen=false) {
   el('search').value = ''; el('message').textContent = '';
   setChildren(el('tree')); setChildren(el('rows')); current = null; folder = 'root';
   el('editor').hidden = true; el('vault').hidden = true; el('gate').hidden = false;
+  el('createPinHint').hidden=true;
   el('access').hidden=true;
   const status=await call('status');
   exists=status.exists;
@@ -314,7 +315,14 @@ async function renderBio() {
   el('bioToggle').disabled=!bioState.available && !bioState.enabled;
   el('bioToggle').textContent=bioState.enabled?'Отключить':'Включить';
 }
+function updatePinHint(input,hint,creating){
+  const length=Array.from(input.value).length;
+  hint.hidden=!creating || length===0 || length>=6;
+}
+el('pin').addEventListener('input',()=>updatePinHint(el('pin'),el('createPinHint'),!exists));
+el('newPin').addEventListener('input',()=>updatePinHint(el('newPin'),el('changePinHint'),true));
 function clearSettings() {
+  el('changePinHint').hidden=true;
   clearTimeout(hideTimer);
   for(const id of ['oldPin','newPin','confirmPin','dbPassword','diskPassword']) el(id).value='';
   el('confirmImport').checked=false;

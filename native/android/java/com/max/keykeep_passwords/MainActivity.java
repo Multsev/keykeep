@@ -212,7 +212,7 @@ public final class MainActivity extends Activity {
                 JSONObject proof=core(op("verifyPin").put("currentPin",args.optString("currentPin")));
                 if (proof.has("error")) {reply(id,proof);return;}
                 if (name.equals("bioEnable")) { biometric(id,args,true);return; }
-                if (name.equals("changePin") && args.optString("newPin").codePoints().count()<6) {error(id,"Введите минимум 6 символов");return;}
+                if (name.equals("changePin") && args.optString("newPin").isEmpty()) {error(id,"Введите PIN");return;}
                 keys.disableBiometric();
                 if (name.equals("bioDisable")) {value(id,JSONObject.NULL);return;}
                 break;

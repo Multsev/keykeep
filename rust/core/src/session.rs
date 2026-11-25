@@ -309,8 +309,8 @@ impl Session {
                     if self.path.try_exists().map_err(|_| "Ошибка доступа")? {
                         return Err("Хранилище уже существует");
                     }
-                    if pin.chars().count() < 6 {
-                        return Err("Введите минимум 6 символов");
+                    if pin.is_empty() {
+                        return Err("Введите PIN");
                     }
                     let v = if op == "createFromKdbx" {
                         let keyfile = Self::keyfile(&r)?;
@@ -398,8 +398,8 @@ impl Session {
                 self.attempts.clear()?;
                 if op == "changePin" {
                     let next = arg("newPin")?;
-                    if next.chars().count() < 6 {
-                        return Err("Введите минимум 6 символов");
+                    if next.is_empty() {
+                        return Err("Введите PIN");
                     }
                     self.write(v, next)?;
                     self.unlocked.as_mut().unwrap().0 = Zeroizing::new(next.to_owned());
