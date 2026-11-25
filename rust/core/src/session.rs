@@ -92,7 +92,7 @@ impl Session {
     pub(crate) fn save_entry(
         next: &mut Vault,
         id: &str,
-        values: Values,
+        mut values: Values,
         time: String,
         create_missing: bool,
     ) -> Result<String, &'static str> {
@@ -126,6 +126,7 @@ impl Session {
                 .iter_mut()
                 .find(|e| e.id == id)
                 .ok_or("Запись отсутствует")?;
+            values.attachments.clone_from(&e.values.attachments);
             if e.values != values {
                 e.history.push(Revision {
                     changed_at: time.clone(),
@@ -353,8 +354,13 @@ impl Session {
                         }
                     }
                 };
+                let result = if op == "createFromKdbx" {
+                    json!({"entries":vault.entries.len(),"folders":vault.folders.len().saturating_sub(1)})
+                } else {
+                    Value::Null
+                };
                 self.unlocked = Some((Zeroizing::new(pin.to_owned()), vault));
-                return Ok(Value::Null);
+                return Ok(result);
             }
             _ => {}
         }

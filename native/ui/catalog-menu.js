@@ -2,6 +2,7 @@
 let activeContextMenu=null, contextTrigger=null;
 function closeCatalogMenu(restoreFocus=false){
   if(!activeContextMenu)return;
+  if(activeContextMenu===el('vaultAddChoice'))contextTrigger?.setAttribute('aria-expanded','false');
   activeContextMenu.hidePopover();
   activeContextMenu.hidden=true;
   activeContextMenu=null;
@@ -21,7 +22,7 @@ function showContextMenu(menu,event){
   menu.querySelector('button:not([hidden])').focus();
 }
 document.addEventListener('pointerdown',e=>{
-  if(activeContextMenu && !activeContextMenu.contains(e.target))closeCatalogMenu();
+  if(activeContextMenu && !activeContextMenu.contains(e.target) && !(activeContextMenu===el('vaultAddChoice') && contextTrigger?.contains(e.target)))closeCatalogMenu();
 },true);
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape' && activeContextMenu){
@@ -66,7 +67,7 @@ document.getElementById('vaultCatalog').oncontextmenu=e=>{
   if(!e.target.closest('button,dialog,[popover]'))openCatalogMenu(e,null,null);
 };
 document.getElementById('renameCancel').onclick=()=>el('vaultRename').close();
-for(const menu of [document.getElementById('catalogMenu'),document.getElementById('folderMenu')])menu.onkeydown=e=>{
+for(const menu of [document.getElementById('catalogMenu'),document.getElementById('folderMenu'),document.getElementById('vaultAddChoice')])menu.onkeydown=e=>{
   if(!['ArrowDown','ArrowUp'].includes(e.key))return;
   const buttons=Array.from(e.currentTarget.querySelectorAll('button:not([hidden])'));
   const index=buttons.indexOf(document.activeElement);

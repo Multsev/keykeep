@@ -8,7 +8,7 @@ const until = async (condition, step) => {
 };
 if(externalTest){
   await until(()=>!catalogBusy && el('startupExchange').open && el('startupDbName').textContent,'Finder document event');
-  el('pin').value=el('repeat').value='9';el('startupPassword').value='fixture-password';el('enter').click();
+  if(!el('loginPinLabel').hidden || !el('repeatLabel').hidden)throw Error('extra PIN fields on KeePass import');el('startupPassword').value='fixture-password';el('enter').click();
   await until(()=>!el('vault').hidden && el('rows').textContent.includes('ImportFixture'),'import Finder document');
   const path=await call('testMoveFile');
   if(!path.normalize('NFC').endsWith('Перемещённое.kk'))throw Error('bookmark still points to old path');
@@ -43,17 +43,23 @@ el('generalClose').click();el('emptyCreate').click();el(startupImport?'addFromFi
 await until(()=>!catalogBusy && !el('access').hidden && (startupImport || el('activeVaultName').textContent==='Основное'),'choose folder and name first');
 if(startupImport){
   await until(()=>el('startupExchange').open && el('startupDbName').textContent,'selected database');
-  el('pin').value=el('repeat').value='9';
+  if(!el('loginPinLabel').hidden || !el('repeatLabel').hidden)throw Error('extra PIN fields on KeePass import');
   el('startupPassword').value='incorrect';el('enter').click();
   for(let i=0;i<200 && !el('message').textContent;i++)await new Promise(r=>setTimeout(r,50));
   if(!el('message').textContent || (await call('status')).exists)throw Error('failed import created vault');
+  await call('testResumeImport');
+  await reset();
+  if(!el('startupDbName').textContent || !el('loginPinLabel').hidden)throw Error('lost pending import');
+  let rejected=false;
+  try{await call('create',{pin:'fixture'});}catch{rejected=true;}
+  if(!rejected || (await call('status')).exists)throw Error('created empty vault during import');
   el('startupPassword').value='fixture-password';el('enter').click();
   await until(()=>!el('vault').hidden && el('rows').children.length,'startup import');
   if(!el('rows').textContent.includes('ImportFixture'))throw Error('missing fixture');
   el('lock').click();
   await until(()=>!el('gate').hidden && el('enter').textContent==='Открыть','lock imported vault');
   if(!el('startupExchange').hidden)throw Error('existing vault offered startup import');
-  el('pin').value='9';el('enter').click();
+  el('pin').value='fixture-password';el('enter').click();
   await until(()=>!el('vault').hidden && el('rows').textContent.includes('ImportFixture'),'reopen import');
   return 'WKWebView: first-run KDBX import, wrong password, retry, lock and reopen passed';
 }
@@ -65,16 +71,51 @@ for(const [value,weak] of [['',false],['7',true],['12345',true],['123456',false]
 el('pin').value=el('repeat').value='7';
 el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'create');
+{
+  const nativeCall=call;
+  let response='cancelled';
+  await call('lock');
+  try{
+    call=async(op,args)=>op==='bioStatus'?{available:true,enabled:true,autoPrompt:false}:op==='bioUnlock'?response:nativeCall(op,args);
+    await reset();
+    if(!el('pin').disabled || el('bioUnlock').hidden)throw Error('fingerprint must be primary');
+    async function attempt(){el('bioUnlock').click();await until(()=>!el('bioUnlock').disabled,'biometric reply');}
+    await attempt();
+    response='mismatch';
+    for(let i=0;i<3;i++){
+      if(!el('loginPinLabel').hidden)throw Error('premature PIN fallback');
+      await attempt();
+    }
+    if(el('loginPinLabel').hidden || el('pin').disabled)throw Error('missing PIN fallback');
+  }finally{call=nativeCall;}
+  el('pin').value='7';el('enter').click();
+  await until(()=>!el('vault').hidden && el('tree').children.length,'PIN fallback login');
+}
 if(testAddFile){
   const id=await call('save',{id:'',values:{title:'Copied entry',username:'fixture',password:'fixture',folderId:'root'},time:new Date().toISOString()});
   await call('testDropVault');
   await until(()=>!catalogBusy && el('activeVaultName').textContent==='Копия' && el('enter').textContent==='Открыть','attach local file');
   el('pin').value='7';el('enter').click();
   await until(()=>!el('vault').hidden && metal.find('data-entry',id),'unlock attached file');
-  el('toggleCatalog').click();el('catalogAdd').click();el('addFromFile').click();
-  await until(()=>!el('vaultAddChoice').open && !catalogBusy,'select same file again');
+  el('toggleCatalog').click();el('catalogAdd').click();
+  if(!el('vaultAddChoice').matches(':popover-open') || el('catalogAdd').getAttribute('aria-expanded')!=='true')throw Error('missing add menu');
+  el('addFromFile').click();
+  await until(()=>el('vaultAddChoice').hidden && !catalogBusy,'select same file again');
   if(el('catalogRows').children.length!==2 || el('vault').hidden)throw Error('duplicate attachment');
-  return 'PASS existing KeyKeep file, original PIN, entry readback and duplicate selection';
+  const attached=activeVaultId;
+  el('catalogRows').querySelector('[aria-current=true]').closest('.vault-row').querySelector('.vault-trash').click();
+  el('trashDetach').click();
+  await until(()=>!catalogBusy && el('catalogRows').children.length===1,'remove only from list');
+  await call('testDropVault',{mustExist:true});
+  await until(()=>!catalogBusy && activeVaultId===attached && !el('access').hidden,'reconnect original profile');
+  el('pin').value='7';el('enter').click();
+  await until(()=>!el('vault').hidden && metal.find('data-entry',id),'read original file after removal');
+  el('toggleCatalog').click();
+  el('catalogRows').querySelector('[aria-current=true]').closest('.vault-row').querySelector('.vault-trash').click();
+  el('trashConfirm').click();
+  await until(()=>!catalogBusy && el('catalogRows').children.length===1,'trash attached file');
+  if(!(await call('trashList')).some(item=>item.name==='Копия'))throw Error('missing trashed file');
+  return 'PASS detach, reopen original file with PIN, then remove file and verify trash receipt';
 }
 
 {

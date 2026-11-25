@@ -112,3 +112,68 @@ fn exchange_with_keepassxc() {
         assert_eq!(observed.trim(), "synthetic-only");
     }
 }
+
+#[test]
+fn imports_history_with_a_different_entry_uuid() {
+    use keepass::{Database, DatabaseKey, db::History};
+    let mut db = Database::new();
+    let mut root = db.root_mut();
+    let mut original = root.add_entry();
+    original.set_protected("Password", "previous");
+    let snapshot = (*original).clone();
+    let mut current = root.add_entry();
+    current.set_protected("Password", "current");
+    let mut history = History::default();
+    history.add_entry(snapshot);
+    current.history = Some(history);
+    let mut data = Vec::new();
+    db.save(&mut data, DatabaseKey::new().with_password("fixture"))
+        .unwrap();
+    let vault = kdbx::import(&data, "fixture", None).unwrap();
+    let entry = vault
+        .entries
+        .iter()
+        .find(|e| e.values.password == "current")
+        .unwrap();
+    assert_eq!(entry.history.len(), 1);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(entry.history[0].values.as_ref().unwrap())
+            .unwrap()["password"],
+        "previous"
+    );
+}
+
+#[test]
+fn attachments_survive_local_storage_and_keepass_export() {
+    use keepass::{Database, DatabaseKey, db::Value};
+    let mut source = Database::new();
+    let mut group = source.root_mut();
+    let mut entry = group.add_entry();
+    entry.set_unprotected("Title", "fixture");
+    entry.add_attachment("file.bin", Value::protected(vec![0, 255, 42]));
+    entry.add_attachment("empty", Value::unprotected(Vec::new()));
+    let key = || DatabaseKey::new().with_password("fixture");
+    let mut bytes = Vec::new();
+    source.save(&mut bytes, key()).unwrap();
+    let vault = kdbx::import(&bytes, "fixture", None).unwrap();
+    let encrypted = keykeep_core::storage::seal(&vault, "fixture", &[1; 32]).unwrap();
+    let vault = keykeep_core::storage::open(&encrypted, "fixture", &[1; 32]).unwrap();
+    for version in [3, 4] {
+        let bytes = kdbx::export_version(&vault, "fixture", None, version).unwrap();
+        let db = Database::open(&mut bytes.as_slice(), key()).unwrap();
+        let root = db.root();
+        let item = root.entries().next().unwrap();
+        assert_eq!(item.attachments_named().count(), 2);
+        assert_eq!(
+            item.attachment_by_name("file.bin").unwrap().data.get(),
+            &[0, 255, 42]
+        );
+        assert!(
+            item.attachment_by_name("empty")
+                .unwrap()
+                .data
+                .get()
+                .is_empty()
+        );
+    }
+}

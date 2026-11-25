@@ -208,7 +208,7 @@ public final class MigrationProbe extends Instrumentation {
             waitFor("bioState.enabled===false");
         }
         waitFor("el('security').open && el('bioToggle').textContent==='Включить' && !el('bioToggle').disabled");
-        evaluate("el('oldPin').value='123456';el('bioToggle').click()");
+        evaluate("el('oldPin').value='';el('bioToggle').click()");
         promptAction("finger");
         waitFor("el('bioToggle').textContent==='Отключить' && el('autoPrompt').checked");
         evaluate("el('dismiss').click()");
@@ -234,7 +234,8 @@ public final class MigrationProbe extends Instrumentation {
         waitFor("!el('gate').hidden && !el('bioUnlock').hidden");
         evaluate("el('bioUnlock').click()");
         promptAction("cancel");
-        waitFor("!el('gate').hidden && !el('bioUnlock').disabled && el('message').textContent.length>0");
+        waitFor("!el('gate').hidden && !el('bioUnlock').disabled && el('loginPinLabel').hidden");
+        evaluate("el('useLoginPin').click()");
         evaluate("el('pin').value='123456';el('enter').click()");
         waitFor("!el('vault').hidden && el('rows').textContent.includes('MigrationFixture')");
         evaluate("el('settings').click()");

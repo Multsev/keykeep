@@ -1,5 +1,6 @@
 //! KeePass exchange for the folder, field and revision types supported by KeyKeep.
-use crate::legacy::{Entry, Field, FieldType, Folder, Revision, Values, Vault};
+use crate::legacy::{Attachment, Entry, Field, FieldType, Folder, Revision, Values, Vault};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use keepass::{
     Database, DatabaseKey,
     db::{self, GroupMut, GroupRef, fields::*},
@@ -127,14 +128,18 @@ fn export_v3(
     db.master_key_changed = now;
     db.name_changed = now;
     db.recycle_bin_changed = now;
-    db.root_group = group_v3(root, now);
+    db.root_group = group_v3(root, now, &mut db.binaries);
     let mut bytes = Vec::new();
     db.save(&mut bytes)
         .map_err(|_| "Не удалось записать KDBX 3")?;
     Ok(bytes)
 }
 
-fn group_v3(source: GroupRef<'_>, now: chrono::DateTime<chrono::Utc>) -> kpdb::Group {
+fn group_v3(
+    source: GroupRef<'_>,
+    now: chrono::DateTime<chrono::Utc>,
+    binaries: &mut kpdb::BinariesMap,
+) -> kpdb::Group {
     let mut group = kpdb::Group::new(&source.name);
     group.custom_icon_uuid = Some(kpdb::CustomIconUuid(Uuid::nil()));
     group.creation_time = now;
@@ -152,6 +157,13 @@ fn group_v3(source: GroupRef<'_>, now: chrono::DateTime<chrono::Utc>) -> kpdb::G
         entry.last_modified = now;
         entry.location_changed = now;
         entry.uuid = kpdb::EntryUuid(item.id().uuid());
+        for (name, attachment) in item.attachments_named() {
+            let id = kpdb::BinaryId(binaries.len().to_string());
+            binaries.insert(id.clone(), attachment.data.get().clone());
+            entry
+                .binaries
+                .insert(kpdb::BinaryKey(name.to_owned()), kpdb::BinaryValue::Ref(id));
+        }
         for (name, value) in &item.fields {
             let key = if KNOWN_FIELDS.contains(&name.as_str()) {
                 kpdb::StringKey::from_string(name)
@@ -166,7 +178,7 @@ fn group_v3(source: GroupRef<'_>, now: chrono::DateTime<chrono::Utc>) -> kpdb::G
         group.add_entry(entry);
     }
     for child in source.groups() {
-        group.add_group(group_v3(child, now));
+        group.add_group(group_v3(child, now, binaries));
     }
     group
 }
@@ -215,6 +227,17 @@ fn write_group(
             item.set_unprotected(name, value.as_str());
         }
         item.set_protected(PASSWORD, v.password.as_str());
+        for (name, attachment) in &v.attachments {
+            let bytes = STANDARD
+                .decode(&attachment.data)
+                .map_err(|_| "Ошибка данных вложения")?;
+            let data = if attachment.protected {
+                db::Value::protected(bytes)
+            } else {
+                db::Value::unprotected(bytes)
+            };
+            item.add_attachment(name, data);
+        }
         let mut layout = Vec::new();
         for field in &v.custom_fields {
             if item.fields.contains_key(&field.name)
@@ -252,19 +275,22 @@ fn write_group(
     Ok(())
 }
 
-pub fn import(
-    mut bytes: &[u8],
-    password: &str,
-    keyfile: Option<&[u8]>,
-) -> Result<Vault, &'static str> {
+pub fn import(bytes: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Vault, &'static str> {
+    // A decoder panic must not cross the native ABI and abort the application.
+    std::panic::catch_unwind(|| decode(bytes, password, keyfile))
+        .map_err(|_| "Не удалось разобрать содержимое KeePass. Импорт остановлен.")?
+}
+
+fn decode(mut bytes: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Vault, &'static str> {
     let db = Database::open(&mut bytes, key(password, keyfile)?)
         .map_err(|_| "Проверьте базу KeePass, пароль и ключевой файл")?;
     let mut vault = Vault::from_android(None, None)?;
     read_group(db.root(), "root", &mut vault, 0)?;
+    vault.validate()?;
     Ok(vault)
 }
 
-fn read_values(e: &db::Entry, parent: &str) -> Result<Values, &'static str> {
+fn read_values(e: &db::EntryRef<'_>, parent: &str) -> Result<Values, &'static str> {
     let mut custom_fields = Vec::new();
     let layout: Vec<(String, FieldType)> = e
         .get(ORDER)
@@ -311,6 +337,18 @@ fn read_values(e: &db::Entry, parent: &str) -> Result<Values, &'static str> {
         note: field(NOTES),
         folder_id: parent.into(),
         custom_fields,
+        attachments: e
+            .attachments_named()
+            .map(|(name, a)| {
+                (
+                    name.to_owned(),
+                    Attachment {
+                        data: STANDARD.encode(a.data.get()),
+                        protected: a.data.is_protected(),
+                    },
+                )
+            })
+            .collect(),
     })
 }
 
@@ -331,9 +369,6 @@ fn read_group(
         return Err(TOO_DEEP);
     }
     for e in group.entries() {
-        if e.attachments().next().is_some() {
-            return Err("База содержит вложения. Импорт остановлен для сохранности данных.");
-        }
         let mut history: Vec<Revision> = e
             .get(HISTORY)
             .map(serde_json::from_str)
@@ -341,11 +376,12 @@ fn read_group(
             .map_err(|_| INVALID)?
             .unwrap_or_default();
         if let Some(h) = &e.history {
-            for old in h.get_entries() {
+            for i in 0..h.get_entries().len() {
+                let old = e.historical(i).ok_or(INVALID)?;
                 history.push(Revision {
-                    changed_at: modified(old),
+                    changed_at: modified(&old),
                     values: Some(
-                        serde_json::to_string(&read_values(old, parent)?).map_err(|_| INVALID)?,
+                        serde_json::to_string(&read_values(&old, parent)?).map_err(|_| INVALID)?,
                     ),
                     password: None,
                 });

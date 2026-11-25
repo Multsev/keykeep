@@ -11,4 +11,4 @@
 #metal-drag{position:fixed;top:0;left:-200px;padding:.3rem .8rem;border-radius:1em;background:var(--metal-surface);color:var(--ink);border:1px solid var(--metal-rim)}
 .mac-vaults[data-metal=off] *{transition-duration:0s!important;transition-delay:0s!important}
 @media(prefers-reduced-motion:reduce){.mac-vaults *{transition-duration:0s!important;transition-delay:0s!important}}
-.mac-vaults #access{border-radius:.75rem;box-shadow:inset 0 1px var(--line);padding-block-start:.8rem}
+.mac-vaults #access{border-radius:.75rem;padding-block-start:.8rem}

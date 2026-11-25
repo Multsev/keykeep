@@ -99,9 +99,9 @@ dialog{max-height:85dvh}
 #revealVaultFile:hover #vaultPath,#revealVaultFile:focus-visible #vaultPath{text-decoration:underline}
 #vaultPath{user-select:auto}
 
-#catalogMenu{position:fixed;inset:auto;margin:0;padding:3px;background:var(--field);color:var(--ink);border:1px solid var(--line);border-radius:6px;box-shadow:0 3px 12px #0003}
-#catalogMenu button{display:block;width:100%;text-align:start;background:transparent;border:0;padding:.35rem .65rem}
-#catalogMenu button:is(:hover,:focus-visible){background:var(--hover)}
+:is(#catalogMenu,#vaultAddChoice){position:fixed;inset:auto;margin:0;padding:3px;background:var(--field);color:var(--ink);border:1px solid var(--line);border-radius:6px;box-shadow:0 3px 12px #0003}
+:is(#catalogMenu,#vaultAddChoice) button{display:block;width:100%;text-align:start;background:transparent;border:0;padding:.35rem .65rem}
+:is(#catalogMenu,#vaultAddChoice) button:is(:hover,:focus-visible){background:var(--hover)}
 #renameVaultError:empty{display:none}
 
 .catalog-tools{display:flex;gap:3px}

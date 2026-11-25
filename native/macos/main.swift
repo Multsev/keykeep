@@ -161,6 +161,13 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             try activateVault(existing["id"]!)
             return
         }
+        if let saved=try catalog.items(detached:true).first(where:{URL(fileURLWithPath:$0["file"]!).resolvingSymlinksInPath().standardizedFileURL==file}), let id=saved["id"] {
+            try beforeSwitch()
+            let marker=try catalog.directory(id).appendingPathComponent("detached")
+            try FileManager.default.removeItem(at:marker)
+            do {try activateVault(id)} catch {try Data().write(to:marker,options:.atomic);throw error}
+            return
+        }
         let handle=try FileHandle(forReadingFrom:file)
         defer {try? handle.close()}
         guard try handle.read(upToCount:4)==Data("KK01".utf8), try handle.seekToEnd()>=48 else {
@@ -234,7 +241,8 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         }
         sessionFile=file;kk_relocate(next,file.path);catalog.remember(file,for:id)
         rememberActive=cached != nil
-        prompt?.invalidate();prompt=nil;importURL=nil;keyFileURL=nil;oauthCallback=nil
+        prompt?.invalidate();prompt=nil;keyFileURL=nil;oauthCallback=nil
+        importURL=(try? String(contentsOf:dir.appendingPathComponent("pending-kdbx"),encoding:.utf8)).map{URL(fileURLWithPath:$0)}
         #if !UI_TEST
         UserDefaults.standard.set(id,forKey:"selectedVault")
         #endif
@@ -265,6 +273,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         web.isHidden = true
         web.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
     }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {lock()}
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         webView.isHidden = false
         #if UI_TEST
@@ -426,105 +435,135 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                 let readiness=core(["op":"suspendServices"])
                 if readiness["error"] != nil {reply(readiness);return}
             }
-            do {
-                var source:URL?
-                if op == "vaultAddFile", args["incoming"] as? Bool == true {
-                    guard !incomingFiles.isEmpty else {reply(["value":["cancelled":true]]);return}
-                    source=incomingFiles.removeFirst()
-                } else if op == "vaultAddFile" {
-                    #if UI_TEST
-                    if let path=ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] { source=URL(fileURLWithPath:path) }
-                    else {
-                        let copy=catalog.base.appendingPathComponent("Копия.kk")
-                        if !FileManager.default.fileExists(atPath:copy.path){try FileManager.default.copyItem(at:catalog.file(activeID),to:copy)}
-                        source=copy
-                    }
-                    #else
-                    let picker=NSOpenPanel()
-                    picker.title="Добавить хранилище"
-                    picker.prompt="Добавить"
-                    picker.canChooseDirectories=false
-                    picker.allowedContentTypes=["kk","kdbx"].compactMap{UTType(filenameExtension:$0)}
-                    guard picker.runModal() == .OK,let selected=picker.url else {reply(["value":["cancelled":true]]);return}
-                    source=selected
-                    #endif
-                }
-                if let file=source,file.pathExtension.lowercased()=="kk" {
-                    let current=try catalog.file(activeID).resolvingSymlinksInPath().standardizedFileURL
-                    if file.resolvingSymlinksInPath().standardizedFileURL==current {
-                        reply(["value":["cancelled":true]]);return
-                    }
-                    try attachVault(file) {
-                        if let message=core(["op":"suspendServices"])["error"] as? String {
-                            throw NSError(domain:"KeyKeep.Add",code:3,userInfo:[NSLocalizedDescriptionKey:message])
+            func applySelection(_ source:URL?) {
+                do {
+                    if let file=source,file.pathExtension.lowercased()=="kk" {
+                        let current=try catalog.file(activeID).resolvingSymlinksInPath().standardizedFileURL
+                        if file.resolvingSymlinksInPath().standardizedFileURL==current {
+                            reply(["value":["cancelled":true]]);return
                         }
-                    }
-                } else if op == "vaultNew" || op == "vaultAddFile" {
-                    let suggested=source?.deletingPathExtension().lastPathComponent ?? (args["name"] as? String).map { ($0 as NSString).lastPathComponent } ?? "Новое хранилище"
-                    let folder:URL
-                    #if UI_TEST
-                    folder=catalog.base.appendingPathComponent("Downloads")
-                    try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
-                    #else
-                    let last=UserDefaults.standard.url(forKey:"vaultSaveDirectory")
-                    folder=last.flatMap{FileManager.default.isWritableFile(atPath:$0.path) ? $0:nil} ?? FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
-                    #endif
-                    let url:URL
-                    if source != nil {url=try catalog.suggestedFile(name:suggested,in:folder)}
-                    else {
+                        try attachVault(file) {
+                            if let message=core(["op":"suspendServices"])["error"] as? String {
+                                throw NSError(domain:"KeyKeep.Add",code:3,userInfo:[NSLocalizedDescriptionKey:message])
+                            }
+                        }
+                    } else if op == "vaultNew" || op == "vaultAddFile" {
+                        let suggested=source?.deletingPathExtension().lastPathComponent ?? (args["name"] as? String).map { ($0 as NSString).lastPathComponent } ?? "Новое хранилище"
+                        let folder:URL
                         #if UI_TEST
-                        url=folder.appendingPathComponent((args["initial"] as? Bool == true ? "Основное":"Проверка")+".kk")
+                        folder=catalog.base.appendingPathComponent("Downloads")
+                        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
                         #else
-                        let panel=NSSavePanel();panel.title="Новое хранилище";panel.prompt="Выбрать";panel.directoryURL=folder
-                        panel.nameFieldStringValue=try catalog.suggestedFile(name:suggested,in:folder).lastPathComponent
-                        panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data];panel.isExtensionHidden=false
-                        guard panel.runModal() == .OK,let chosen=panel.url else{reply(["value":["cancelled":true]]);return}
-                        url=chosen
+                        let last=UserDefaults.standard.url(forKey:"vaultSaveDirectory")
+                        folder=last.flatMap{FileManager.default.isWritableFile(atPath:$0.path) ? $0:nil} ?? FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
                         #endif
-                    }
-                    guard !FileManager.default.fileExists(atPath:url.path) else {reply(["error":"Файл уже существует. Выберите другое имя."]);return}
-                    let readiness=core(["op":"suspendServices"])
-                    if readiness["error"] != nil {reply(readiness);return}
-                    let id=try catalog.create(at:url)
-                    do {try activateVault(id)} catch {
-                        if let dir=try? catalog.directory(id){try? FileManager.default.removeItem(at:dir)}
-                        throw error
-                    }
-                    UserDefaults.standard.set(url.deletingLastPathComponent(),forKey:"vaultSaveDirectory")
-                    importURL=source;keyFileURL=nil
-                } else if op != "vaultCatalog" {
-                    guard let id=args["id"] as? String,
-                          try catalog.items().contains(where:{$0["id"]==id}) else {throw PlatformFailure()}
-                    if op == "vaultSelect" {try activateVault(id)}
-                    else {
-                        guard args["confirmed"] as? Bool == true else {throw PlatformFailure()}
-                        let dir=try catalog.directory(id)
-                        let file=try catalog.file(id)
-                        let needsLock = id != activeID && parked[id] == nil
-                        let lock = needsLock ? kk_new_at(file.path,dir.appendingPathComponent("vault.kk").path) : nil
-                        guard !needsLock || lock != nil else {throw PlatformFailure()}
-                        defer { if let lock {kk_close(lock)} }
-                        var targets=[dir]
-                        if file != dir.appendingPathComponent("vault.kk"), FileManager.default.fileExists(atPath:file.path){targets.insert(file,at:0)}
-                        guard let name=try catalog.items().first(where:{$0["id"]==id})?["name"] else {throw PlatformFailure()}
-                        try VaultTrash(catalog:catalog).remove(id,name:name,targets:targets)
-                        if let cached=parked.removeValue(forKey:id) {kk_close(cached)}
-                        if activeID==id {
-                            rememberActive=false;kk_close(session);session=nil
-                            try activateVault(try catalog.items().first?["id"] ?? VaultCatalog.empty)
+                        let url:URL
+                        if source != nil {url=try catalog.suggestedFile(name:suggested,in:folder)}
+                        else {
+                            #if UI_TEST
+                            url=folder.appendingPathComponent((args["initial"] as? Bool == true ? "Основное":"Проверка")+".kk")
+                            #else
+                            let panel=NSSavePanel();panel.title="Новое хранилище";panel.prompt="Выбрать";panel.directoryURL=folder
+                            panel.nameFieldStringValue=try catalog.suggestedFile(name:suggested,in:folder).lastPathComponent
+                            panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data];panel.isExtensionHidden=false
+                            guard panel.runModal() == .OK,let chosen=panel.url else{reply(["value":["cancelled":true]]);return}
+                            url=chosen
+                            #endif
+                        }
+                        guard !FileManager.default.fileExists(atPath:url.path) else {reply(["error":"Файл уже существует. Выберите другое имя."]);return}
+                        let readiness=core(["op":"suspendServices"])
+                        if readiness["error"] != nil {reply(readiness);return}
+                        let id=try catalog.create(at:url)
+                        do {
+                            if let source {try source.path.write(to:catalog.directory(id).appendingPathComponent("pending-kdbx"),atomically:true,encoding:.utf8)}
+                            try activateVault(id)
+                        } catch {
+                            if let dir=try? catalog.directory(id){try? FileManager.default.removeItem(at:dir)}
+                            throw error
+                        }
+                        UserDefaults.standard.set(url.deletingLastPathComponent(),forKey:"vaultSaveDirectory")
+                        importURL=source;keyFileURL=nil
+                    } else if op != "vaultCatalog" {
+                        guard let id=args["id"] as? String,
+                              try catalog.items().contains(where:{$0["id"]==id}) else {throw PlatformFailure()}
+                        if op == "vaultSelect" {try activateVault(id)}
+                        else {
+                            guard args["confirmed"] as? Bool == true else {throw PlatformFailure()}
+                            let dir=try catalog.directory(id)
+                            let file=try catalog.file(id)
+                            let needsLock = id != activeID && parked[id] == nil
+                            let lock = needsLock ? kk_new_at(file.path,dir.appendingPathComponent("vault.kk").path) : nil
+                            guard !needsLock || lock != nil else {throw PlatformFailure()}
+                            defer { if let lock {kk_close(lock)} }
+                            if args["listOnly"] as? Bool == true {
+                                try Data().write(to:dir.appendingPathComponent("detached"),options:.atomic)
+                            } else {
+                                var targets=[dir]
+                                if file != dir.appendingPathComponent("vault.kk"), FileManager.default.fileExists(atPath:file.path){targets.insert(file,at:0)}
+                                guard let name=try catalog.items().first(where:{$0["id"]==id})?["name"] else {throw PlatformFailure()}
+                                try VaultTrash(catalog:catalog).remove(id,name:name,targets:targets)
+                            }
+                            if let cached=parked.removeValue(forKey:id) {kk_close(cached)}
+                            if activeID==id {
+                                rememberActive=false;kk_close(session);session=nil
+                                try activateVault(try catalog.items().first?["id"] ?? VaultCatalog.empty)
+                            }
                         }
                     }
-                }
-                reply(["value":["items":try catalog.items(),"active":activeID,"remembered":rememberActive,"file":try catalog.file(activeID).path]])
-            } catch let error as NSError where error.domain=="KeyKeep.Add" {reply(["error":error.localizedDescription])
-            } catch {reply(["error":op=="vaultNew" ? "Выберите свободное имя файла и доступную для записи папку" : "Не удалось открыть или переместить хранилище. Проверьте доступ и закройте другие окна KeyKeep."])}
+                    reply(["value":["items":try catalog.items(),"active":activeID,"remembered":rememberActive,"file":try catalog.file(activeID).path]])
+                } catch let error as NSError where error.domain=="KeyKeep.Add" {reply(["error":error.localizedDescription])
+                } catch {reply(["error":op=="vaultNew" ? "Выберите свободное имя файла и доступную для записи папку" : "Не удалось открыть или переместить хранилище. Проверьте доступ и закройте другие окна KeyKeep."])}
+            }
+            if op != "vaultAddFile" {applySelection(nil);return}
+            if args["incoming"] as? Bool == true {
+                guard !incomingFiles.isEmpty else {reply(["value":["cancelled":true]]);return}
+                applySelection(incomingFiles.removeFirst())
+                return
+            }
+            #if UI_TEST
+            if ProcessInfo.processInfo.environment["KEYKEEP_TEST_PICKER"] != "1" {
+                if let path=ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] {applySelection(URL(fileURLWithPath:path));return}
+                let copy=catalog.base.appendingPathComponent("Копия.kk")
+                do {
+                    if !FileManager.default.fileExists(atPath:copy.path){try FileManager.default.copyItem(at:catalog.file(activeID),to:copy)}
+                    applySelection(copy)
+                } catch {reply(["error":error.localizedDescription])}
+                return
+            }
+            #endif
+            let picker=NSOpenPanel()
+            picker.title="Добавить хранилище"
+            picker.prompt="Добавить"
+            picker.canChooseDirectories=false
+            picker.allowedContentTypes=["kk","kdbx"].compactMap{UTType(filenameExtension:$0)}
+            let origin=activeID
+            picker.beginSheetModal(for:window){response in
+                guard response == .OK,let selected=picker.url,self.activeID==origin else {reply(["value":["cancelled":true]]);return}
+                applySelection(selected)
+            }
+            #if UI_TEST
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.5) {
+                guard self.window.attachedSheet === picker && picker.isVisible else {print("File picker did not appear");exit(1)}
+                print("PASS native vault file picker presented")
+                picker.cancel(nil)
+            }
+            #endif
             return
         }
         #if UI_TEST
+        if op=="testResumeImport" {
+            let id=activeID
+            do {try activateVault(VaultCatalog.empty);try activateVault(id);reply(["value":true])}
+            catch {reply(["error":"Не удалось возобновить импорт"])}
+            return
+        }
         if op=="testDropVault" {
             do{
                 let file=catalog.base.appendingPathComponent("Копия.kk")
-                if !FileManager.default.fileExists(atPath:file.path){try FileManager.default.copyItem(at:catalog.file(activeID),to:file)}
+                if !FileManager.default.fileExists(atPath:file.path){
+                    guard args["mustExist"] as? Bool != true else{throw PlatformFailure()}
+                    try FileManager.default.copyItem(at:catalog.file(activeID),to:file)
+                }
                 let board=NSPasteboard.withUniqueName()
                 defer{board.releaseGlobally()}
                 guard board.writeObjects([file as NSURL]),(web as? VaultWebView)?.acceptFiles(board)==true else{throw PlatformFailure()}
@@ -630,17 +669,35 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             }
             reply(["value":NSNull()]);return
         }
+        let profile=try? catalog.directory(activeID)
+        let pendingImport=profile?.appendingPathComponent("pending-kdbx")
+        let importing=pendingImport.map{FileManager.default.fileExists(atPath:$0.path)} ?? false
+        if op=="create" && importing {reply(["error":"Для этого хранилища выбран импорт KeePass"]);return}
+        if op=="status" {
+            var result=core(args)
+            if var state=result["value"] as? [String:Any] {
+                state["passwordLogin"]=profile.map{FileManager.default.fileExists(atPath:$0.appendingPathComponent("password-login").path)} ?? false
+                result["value"]=state
+            }
+            reply(result);return
+        }
         if op == "fileStatus" {
             reply(["value":["database":importURL?.lastPathComponent ?? "", "keyfile":keyFileURL?.lastPathComponent ?? ""]]); return
         }
-        if op == "clearExchange" { importURL=nil; keyFileURL=nil; reply(["value":NSNull()]); return }
+        if op == "clearExchange" { if importing {reply(["error":"Выберите другой файл KeePass или другое хранилище"]);return}; importURL=nil; keyFileURL=nil; reply(["value":NSNull()]); return }
         if op == "pickDatabase" || op == "pickKeyfile" {
             let panel = NSOpenPanel()
             panel.canChooseDirectories = false
             panel.allowsMultipleSelection = false
             if op == "pickDatabase", let type = UTType(filenameExtension:"kdbx") { panel.allowedContentTypes = [type] }
             guard panel.runModal() == .OK, let url = panel.url else {reply(["error":"Выбор отменён"]);return}
-            if op == "pickDatabase" {importURL=url} else {keyFileURL=url}
+            if op == "pickDatabase" {
+                if importing,let pendingImport {
+                    do {try url.path.write(to:pendingImport,atomically:true,encoding:.utf8)}
+                    catch {reply(["error":"Не удалось сохранить выбор файла"]);return}
+                }
+                importURL=url
+            } else {keyFileURL=url}
             reply(["value":NSNull()]);return
         }
         if ["readDatabase", "writeDatabase", "createFromFile"].contains(op) {
@@ -652,8 +709,18 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                     guard let importURL else {reply(["error":"Выберите файл KDBX"]);return}
                     query["op"] = op == "createFromFile" ? "createFromKdbx" : "importKdbx"
                     query["data"]=try Data(contentsOf:importURL).base64EncodedString()
+                    if op=="createFromFile",let profile {
+                        let marker=profile.appendingPathComponent("password-login")
+                        if let password=args["password"] as? String,!password.isEmpty {
+                            query["pin"]=password
+                            try Data().write(to:marker,options:.atomic)
+                        } else if FileManager.default.fileExists(atPath:marker.path){try FileManager.default.removeItem(at:marker)}
+                    }
                     let result=core(query)
-                    if result["error"] == nil { self.importURL=nil; self.keyFileURL=nil }
+                    if result["error"] == nil {
+                        if let pendingImport,importing {try? FileManager.default.removeItem(at:pendingImport)}
+                        self.importURL=nil;self.keyFileURL=nil
+                    }
                     reply(result);return
                 }
                 query["op"]="exportKdbx"
@@ -696,7 +763,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             reply(["value":NSNull()]); return
         }
         if op == "lock" { forgetSessions();prompt?.invalidate(); prompt = nil }
-        if ["bioEnable","bioDisable","changePin"].contains(op) {
+        if ["bioDisable","changePin"].contains(op) {
             let proof = core(["op":"verifyPin","currentPin":args["currentPin"] ?? ""])
             if proof["error"] != nil { reply(proof); return }
         }
@@ -711,16 +778,22 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             ctx.localizedFallbackTitle = ""
             prompt = ctx
             let reason = op == "bioEnable" ? "Включить вход в KeyKeep" : "Открыть KeyKeep"
-            ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { ok, _ in
+            ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { ok, error in
                 DispatchQueue.main.async {
                     guard self.prompt === ctx, ok else {
                         if self.prompt === ctx { self.prompt = nil }
-                        reply(["error":"Подтверждение Touch ID отменено"]); return
+                        let cancelled = (error as? LAError).map { [.userCancel,.appCancel,.systemCancel].contains($0.code) } ?? false
+                        if op == "bioUnlock" && cancelled { reply(["value":"cancelled"]) }
+                        else if op == "bioUnlock" && (error as? LAError)?.code == .authenticationFailed { reply(["value":"mismatch"]) }
+                        else { reply(["error":op == "bioUnlock" ? "Touch ID не подтвердил вход. Введите PIN." : "Включение Touch ID отменено"]) }
+                        return
                     }
                     defer { ctx.invalidate(); self.prompt = nil }
                     do {
-                        if op == "bioEnable", let pin = args["currentPin"] as? String {
-                            try self.fingerprint.enroll(pin: pin, context: ctx)
+                        if op == "bioEnable" {
+                            guard let pin = kk_authenticated_pin(self.session) else { reply(["error":"Хранилище заблокировано"]); return }
+                            defer { kk_free_text(pin) }
+                            try self.fingerprint.enroll(pin: String(cString:pin), context: ctx)
                             UserDefaults.standard.set(true,forKey:self.bioPreference)
                             reply(["value":NSNull()])
                         } else {

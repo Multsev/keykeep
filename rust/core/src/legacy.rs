@@ -32,6 +32,12 @@ pub struct Field {
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq)]
+pub struct Attachment {
+    pub data: String,
+    pub protected: bool,
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Values {
     pub title: String,
@@ -45,6 +51,8 @@ pub struct Values {
     pub folder_id: String,
     #[serde(default)]
     pub custom_fields: Vec<Field>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub attachments: std::collections::BTreeMap<String, Attachment>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq)]

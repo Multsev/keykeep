@@ -40,7 +40,15 @@ function on(id, event, fn) {
   });
 }
 function screen(name) { document.body.dataset.screen = name; }
-let pendingAutoUnlock=false;
+let pendingAutoUnlock=false, fingerprintFailures=0;
+function showLoginPin(show){
+  el('loginPinLabel').hidden=!show;
+  el('pin').disabled=!show;
+  el('enter').hidden=!show;
+  el('useLoginPin').hidden=show;
+  el(show?'pin':'bioUnlock').focus();
+}
+on('useLoginPin','click',()=>{pendingAutoUnlock=false;showLoginPin(true);});
 function maybePromptFingerprint(){
   if(!pendingAutoUnlock || el('generalDialog').open || document.hidden || (!window.KeyKeep && !document.hasFocus()) || el('gate').hidden)return;
   pendingAutoUnlock=false;
@@ -52,14 +60,14 @@ async function reset(promptOnOpen=false) {
   el('vaultDestination').hidden=true;stopAuto();metal.stop();resetTreeTools();
   hideUndo();
   if(window.clearMcp)window.clearMcp();
-  pendingAutoUnlock=false;
+  pendingAutoUnlock=false;fingerprintFailures=0;
   closeSettings();
   el('generalDialog').close();el('folderCreateDialog').close();
   clearEntryExtras();el('entryPath').textContent='';
   el('folderDialog').close();
   el('confirmDeletion').close();
   closeCatalogMenu();
-  el('vaultAddChoice').close();el('vaultRename').close();
+  el('vaultRename').close();
   el('recoveryDialog').close();
   el('trashQuestion').close();
   selectTrash(false);
@@ -76,6 +84,7 @@ async function reset(promptOnOpen=false) {
   el('access').hidden=true;
   const status=await call('status');
   exists=status.exists;
+  el('loginSecretTitle').textContent=status.passwordLogin && exists?'Пароль хранилища':'Мастер-PIN';
   if(!window.KeyKeep)await refreshCatalog();
   if(!window.KeyKeep){
     if(!selectedVault){setDrawer(true);el('emptyCreate').focus();return;}
@@ -83,13 +92,16 @@ async function reset(promptOnOpen=false) {
     setDrawer(true);
   }
   el('access').hidden=false;
+  el('startupDbName').textContent=el('startupKeyName').textContent='';
+  el('startupPassword').required=false;
   el('repeatLabel').hidden = exists; el('startupExchange').hidden = exists;
   el('startupExchange').open=false; updateStartupAction();
   if(!exists) await refreshStartupFiles();
   const bio = await biometricStatus();
   el('setupFingerprintLabel').hidden = !bio.available || bio.enabled;
   el('bioUnlock').hidden = !(exists && bio.available && bio.enabled);
-  el('pin').focus();
+  showLoginPin(el('bioUnlock').hidden);
+  if(macImport())updateStartupAction();
   pendingAutoUnlock=promptOnOpen && !el('bioUnlock').hidden && bio.autoPrompt && (window.KeyKeep || !await call('vaultIncoming'));
   maybePromptFingerprint();
 }
@@ -134,7 +146,7 @@ async function refreshCatalog(){
   el('access').hidden=!selectedVault;
   el('emptyCreate').hidden=Boolean(selectedVault);
   el('vaultLocation').hidden=!selectedVault;
-  el('catalogAdd').hidden=!data.items.length;
+  el('catalogAdd').hidden=false;
   await window.updateVaultLocation();
   el('activeVaultName').textContent=selectedVault?.name || '';
   el('workspaceTitle').textContent=el('activeVaultName').textContent;
@@ -153,12 +165,14 @@ async function refreshCatalog(){
       trash.title='Удалить хранилище «'+v.name+'»';
       trash.setAttribute('aria-label',trash.title);
       trash.onclick=()=>{
-        el('trashText').textContent='Переместить «'+v.name+'» в Корзину Mac?';
+        el('trashText').textContent='Удалить хранилище «'+v.name+'»?';
         el('trashPath').textContent=v.file || data.file;
-        el('trashConfirm').onclick=()=>{
+        const remove=listOnly=>{
           el('trashQuestion').close();
-          changeVault('vaultTrash',{id:v.id,confirmed:true});
+          changeVault('vaultTrash',{id:v.id,confirmed:true,listOnly});
         };
+        el('trashDetach').onclick=()=>remove(true);
+        el('trashConfirm').onclick=()=>remove(false);
         el('trashQuestion').showModal();
         el('trashCancel').focus();
       };
@@ -192,13 +206,19 @@ async function changeVault(op,args){
   finally{catalogBusy=false;queueMicrotask(()=>window.receiveVaultFiles?.());el('vaultCatalog').inert=!document.body.classList.contains('drawer-open');if(!el('gate').hidden)el('pin').focus();}
 }
 const addChoice=el('vaultAddChoice');
-el('catalogAdd').onclick=el('emptyCreate').onclick=()=>{
-  addChoice.returnValue='';addChoice.showModal();
+el('catalogAdd').onclick=el('emptyCreate').onclick=e=>{
+  const button=e.currentTarget;
+  if(activeContextMenu===addChoice && contextTrigger===button){closeCatalogMenu(true);return;}
+  const bounds=button.getBoundingClientRect();
+  showContextMenu(addChoice,{target:button,clientX:bounds.left,clientY:bounds.bottom+3});
+  button.setAttribute('aria-expanded','true');
 };
-addChoice.addEventListener('close',()=>{
-  const action=addChoice.returnValue;addChoice.returnValue='';
-  if(action==='new' || action==='file')changeVault(action==='new'?'vaultNew':'vaultAddFile',{initial:!selectedVault});
-});
+for(const [id,op] of [['createBlank','vaultNew'],['addFromFile','vaultAddFile']]){
+  el(id).onclick=()=>{
+    closeCatalogMenu(true);
+    changeVault(op,{initial:!selectedVault});
+  };
+}
 el('recoveryClose').onclick=()=>el('recoveryDialog').close();
 on('catalogRecover','click',async()=>{
   const dialog=el('recoveryDialog'), message=el('recoveryMessage');
@@ -318,7 +338,17 @@ function edit(item={id:'',folderId:folder,customFields:[]}) {
   if(!window.KeyKeep)setupCard(item);
   screen('detail');if (!item.id) el('title').focus();
 }
+function macImport(){return !window.KeyKeep && !exists && Boolean(el('startupDbName').textContent);}
 function updateStartupAction(){
+  if(macImport()){
+    const needsLocal=!el('startupPassword').value && Boolean(el('startupKeyName').textContent);
+    el('loginPinLabel').hidden=el('repeatLabel').hidden=!needsLocal;
+    el('pin').disabled=!needsLocal;
+    el('startupPassword').required=!el('startupKeyName').textContent;
+    el('enter').textContent='Импортировать и открыть';
+    return;
+  }
+  el('startupPassword').required=false;
   el('enter').textContent=exists?'Открыть':el('startupExchange').open?'Импортировать и открыть':'Создать хранилище';
 }
 async function refreshStartupFiles(){
@@ -327,13 +357,18 @@ async function refreshStartupFiles(){
   el('startupDbName').textContent=files.database;
   el('startupKeyName').textContent=files.keyfile;
   if(!window.KeyKeep){
+    el('startupClear').hidden=Boolean(files.database);
     el('vaultDestination').hidden=!files.database;
     el('startupExchange').hidden=!files.database;
     el('startupExchange').open=Boolean(files.database);
   }else if(files.database || files.keyfile)el('startupExchange').open=true;
   updateStartupAction();
 }
-el('startupExchange').addEventListener('toggle',updateStartupAction);
+el('startupPassword').addEventListener('input',updateStartupAction);
+el('startupExchange').addEventListener('toggle',()=>{
+  if(macImport() && !el('gate').hidden)el('startupExchange').open=true;
+  updateStartupAction();
+});
 for(const [id,op] of [['startupDb','pickDatabase'],['startupKey','pickKeyfile'],['startupClear','clearExchange']]){
   on(id,'click',async()=>{await call(op);await refreshStartupFiles();});
 }
@@ -362,22 +397,32 @@ async function finishLogin(){
 }
 on('access','submit',async()=>{
   pendingAutoUnlock=false;
-  const pin=el('pin').value;
-  if (!exists && el('repeat').value!==pin) throw new Error('PIN не совпадает');
+  const importing=macImport();
+  if(el('pin').disabled && !importing)return;
+  const databasePassword=el('startupPassword').value;
+  const sharedPassword=importing && Boolean(databasePassword);
+  const pin=sharedPassword?databasePassword:el('pin').value;
+  if (!exists && !sharedPassword && el('repeat').value!==pin) throw new Error('PIN не совпадает');
   if(!exists && el('startupExchange').open && !el('startupDbName').textContent)throw Error('Выберите файл KDBX');
   if(!window.KeyKeep && !selectedVault)return;
-  if(!exists && el('startupExchange').open){
-    await call('createFromFile',{pin,password:el('startupPassword').value});
+  let imported;
+  if(importing || (!exists && el('startupExchange').open)){
+    if(el('enter').disabled)return;
+    el('enter').disabled=true;
+    try{imported=await call('createFromFile',{pin,password:databasePassword});}
+    finally{el('enter').disabled=false;}
+
   }else{
     await call(exists?'unlock':'create',{pin});
     if(!exists)await call('clearExchange');
   }
   let enrollmentError;
   if(!el('setupFingerprintLabel').hidden && el('setupFingerprint').checked){
-    try{await call('bioEnable',{currentPin:pin});}
+    try{await call('bioEnable');}
     catch(error){enrollmentError=error;}
   }
   await finishLogin();
+  if(imported)el('message').textContent='Импорт завершён. Записей: '+imported.entries+', папок: '+imported.folders;
   if(enrollmentError)el('message').textContent=enrollmentError.message;
 });
 let bioState = {}, hideTimer;
@@ -387,7 +432,7 @@ async function biometricStatus() {
 }
 async function renderBio() {
   bioState=await biometricStatus();
-  el('bioInfo').textContent=bioState.enabled ? 'Вход включён. После смены PIN включите его повторно.' : bioState.available ? 'Для включения введите текущий PIN.' : 'Отпечаток недоступен. Проверьте настройки устройства.';
+  el('bioInfo').textContent=bioState.enabled ? 'Вход включён. После смены PIN включите его повторно.' : bioState.available ? 'Подтвердите включение отпечатком.' : 'Отпечаток недоступен. Проверьте настройки устройства.';
   el('autoPromptLabel').hidden=!bioState.enabled;
   el('autoPrompt').checked=Boolean(bioState.enabled && bioState.autoPrompt);
   el('bioToggle').disabled=!bioState.available && !bioState.enabled;
@@ -432,14 +477,23 @@ el('autoPrompt').addEventListener('change',async()=>{
   await renderBio();
 });
 on('bioToggle','click',async()=>{
-  await call(bioState.enabled?'bioDisable':'bioEnable',{currentPin:el('oldPin').value});
+  if(bioState.enabled)await call('bioDisable',{currentPin:el('oldPin').value});
+  else await call('bioEnable');
   el('oldPin').value='';await renderBio();
 });
 on('bioUnlock','click',async()=>{
   pendingAutoUnlock=false;
   el('bioUnlock').disabled=true;
-  try{await call('bioUnlock');}
-  catch(error){el('pin').focus();throw error;}
+  const vault=activeVaultId;
+  try{
+    const result=await call('bioUnlock');
+    if(vault!==activeVaultId || result==='cancelled')return;
+    if(result==='mismatch'){
+      if(++fingerprintFailures>=3)throw new Error('Отпечаток не распознан. Введите PIN.');
+      el('message').textContent='Попробуйте приложить палец ещё раз.';
+      return;
+    }
+  }catch(error){if(vault!==activeVaultId)return;showLoginPin(true);throw error;}
   finally{el('bioUnlock').disabled=false;}
   await finishLogin();
 });

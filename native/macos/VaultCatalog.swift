@@ -18,7 +18,7 @@ final class VaultCatalog {
         return dir
     }
 
-    func items() throws -> [[String:String]] {
+    func items(detached:Bool = false) throws -> [[String:String]] {
         let fm = FileManager.default
         var result = [[String:String]]()
         if fm.fileExists(atPath: try directory(Self.original).appendingPathComponent("vault.kk").path) {
@@ -36,7 +36,10 @@ final class VaultCatalog {
                 }
             }
         }
-        return result.sorted { $0["name"]!.localizedStandardCompare($1["name"]!) == .orderedAscending }
+        return try result.filter { item in
+            let marker=try directory(item["id"]!).appendingPathComponent("detached")
+            return fm.fileExists(atPath:marker.path)==detached
+        }.sorted { $0["name"]!.localizedStandardCompare($1["name"]!) == .orderedAscending }
     }
 
     func file(_ id:String) throws -> URL {

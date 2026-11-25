@@ -218,15 +218,15 @@ public final class MainActivity extends Activity {
                 }
                 getPreferences(MODE_PRIVATE).edit().putBoolean("bioAutoPrompt",args.getBoolean("enabled")).apply();
                 value(id,JSONObject.NULL);return;
-            case "bioEnable": case "bioDisable": case "changePin":
+            case "bioEnable": biometric(id,true);return;
+            case "bioDisable": case "changePin":
                 JSONObject proof=core(op("verifyPin").put("currentPin",args.optString("currentPin")));
                 if (proof.has("error")) {reply(id,proof);return;}
-                if (name.equals("bioEnable")) { biometric(id,args,true);return; }
                 if (name.equals("changePin") && args.optString("newPin").isEmpty()) {error(id,"Введите PIN");return;}
                 keys.disableBiometric();
                 if (name.equals("bioDisable")) {value(id,JSONObject.NULL);return;}
                 break;
-            case "bioUnlock": biometric(id,args,false);return;
+            case "bioUnlock": biometric(id,false);return;
             case "showPin":
                 if (!core(op("status")).getJSONObject("value").getBoolean("open")) {error(id,"Хранилище заблокировано");return;}
                 confirmOwner(id);return;
@@ -276,21 +276,38 @@ public final class MainActivity extends Activity {
             @Override public void onAuthenticationError(int code,CharSequence message){if(pending==signal){pending=null;error(id,"Просмотр отменён");}}
         });
     }
-    private void biometric(int id,JSONObject args,boolean enroll) throws Exception {
+    private void biometricCancelled(int id,boolean enroll){
+        if(enroll){error(id,"Включение отпечатка отменено");return;}
+        try{value(id,"cancelled");}catch(Exception e){error(id,"Вход отменён");}
+    }
+    private void biometric(int id,boolean enroll) throws Exception {
         if(pending!=null || !biometricAvailable()){error(id,"Биометрия недоступна");return;}
+        if(enroll && !core(op("status")).getJSONObject("value").getBoolean("open")){error(id,"Хранилище заблокировано");return;}
         Cipher cipher=keys.cipher(DeviceKeys.BIO,enroll);
         CancellationSignal signal=new CancellationSignal();
         BiometricPrompt.Builder builder=new BiometricPrompt.Builder(this)
             .setTitle(enroll?"Включить вход по отпечатку":"Открыть KeyKeep")
-            .setNegativeButton("Отмена",getMainExecutor(),(dialog,which)->{if(pending==signal){pending=null;error(id,"Вход отменён");}});
+            .setNegativeButton("Отмена",getMainExecutor(),(dialog,which)->{if(pending==signal){pending=null;biometricCancelled(id,enroll);}});
         if(Build.VERSION.SDK_INT>=30)builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG);
         pending=signal;
         builder.build().authenticate(new BiometricPrompt.CryptoObject(cipher),signal,getMainExecutor(),new BiometricPrompt.AuthenticationCallback(){
+            private int failures;
+            @Override public void onAuthenticationFailed(){
+                if(!enroll && pending==signal && ++failures>=3){
+                    pending=null;
+                    signal.cancel();
+                    error(id,"Отпечаток не распознан. Введите PIN.");
+                }
+            }
             @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result){
                 if(pending!=signal || !foreground)return;pending=null;
                 try {
                     Cipher approved=result.getCryptoObject().getCipher();
-                    if(enroll){keys.store(DeviceKeys.BIO,approved,bytes(args.getString("currentPin")));getPreferences(MODE_PRIVATE).edit().putBoolean("bioAutoPrompt",true).apply();value(id,JSONObject.NULL);}
+                    if(enroll){
+                        byte[] pin=VaultBridge.authenticatedPin(handle);
+                        if(pin==null){error(id,"Хранилище заблокировано");return;}
+                        try{keys.store(DeviceKeys.BIO,approved,pin);}finally{Arrays.fill(pin,(byte)0);}
+                        getPreferences(MODE_PRIVATE).edit().putBoolean("bioAutoPrompt",true).apply();value(id,JSONObject.NULL);}
                     else {
                         byte[] clear=keys.recover(DeviceKeys.BIO,approved);
                         try {reply(id,core(op("unlock").put("pin",new String(clear,StandardCharsets.UTF_8))));}
@@ -298,7 +315,11 @@ public final class MainActivity extends Activity {
                     }
                 }catch(Exception e){error(id,"Войдите по PIN и настройте отпечаток повторно");}
             }
-            @Override public void onAuthenticationError(int code,CharSequence message){if(pending==signal){pending=null;error(id,"Подтверждение отменено");}}
+            @Override public void onAuthenticationError(int code,CharSequence message){if(pending==signal){
+                pending=null;
+                if(code==BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED || code==BiometricPrompt.BIOMETRIC_ERROR_CANCELED)biometricCancelled(id,enroll);
+                else error(id,"Отпечаток не подтверждён. Введите PIN.");
+            }}
         });
     }
     private void discardOwnerRequest(){

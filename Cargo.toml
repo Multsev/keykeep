@@ -1,3 +1,7 @@
 [workspace]
 members = ["rust/core"]
 resolver = "2"
+
+# Preserve historical entries whose UUID differs from the current entry.
+[patch.crates-io]
+keepass = { path = "rust/vendor/keepass" }
