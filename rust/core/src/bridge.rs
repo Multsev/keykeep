@@ -114,3 +114,20 @@ unsafe extern "C" fn kk_shared_oauth(request: *const c_char) -> *mut c_char {
     };
     CString::new(response.to_string()).unwrap().into_raw()
 }
+
+// The native owner obtains a reference while on its serialized session thread.
+// A background wait consumes only the signal reference, never the vault handle.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn kk_mcp_signal(s: *mut Session) -> *const crate::mcp::Signal {
+    unsafe { s.as_ref() }
+        .and_then(|s| s.mcp.as_ref())
+        .map_or(ptr::null(), |m| {
+            std::sync::Arc::into_raw(m.transport.signal.clone())
+        })
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn kk_wait_signal(signal: *const crate::mcp::Signal) {
+    if !signal.is_null() {
+        unsafe { std::sync::Arc::from_raw(signal) }.wait();
+    }
+}

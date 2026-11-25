@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 4] = b"KK01";
 
-fn key(pin: &str, device: &[u8; 32], salt: &[u8]) -> Result<aead::LessSafeKey, &'static str> {
+fn derive(pin: &str, device: &[u8; 32], salt: &[u8]) -> Zeroizing<[u8; 32]> {
     let mut input = Zeroizing::new(device.to_vec());
     input.extend_from_slice(pin.as_bytes());
     let mut derived = Zeroizing::new([0; 32]);
@@ -18,23 +18,73 @@ fn key(pin: &str, device: &[u8; 32], salt: &[u8]) -> Result<aead::LessSafeKey, &
         &input,
         derived.as_mut(),
     );
+    derived
+}
+fn key(raw: &[u8]) -> Result<aead::LessSafeKey, &'static str> {
     Ok(aead::LessSafeKey::new(
-        aead::UnboundKey::new(&aead::AES_256_GCM, derived.as_ref()).map_err(|_| "Ошибка ключа")?,
+        aead::UnboundKey::new(&aead::AES_256_GCM, raw).map_err(|_| "Ошибка ключа")?,
     ))
 }
 
+// Each unlocked MCP session starts a new salt and key. A per-key counter
+// guarantees unique GCM nonces, including across failed persistence attempts.
+pub(crate) struct SnapshotKey {
+    salt: [u8; 16],
+    raw: Zeroizing<[u8; 32]>,
+    sequence: u64,
+}
+impl SnapshotKey {
+    fn new(pin: &str, device: &[u8; 32]) -> Result<Self, &'static str> {
+        let mut salt = [0; 16];
+        OsRng
+            .try_fill_bytes(&mut salt)
+            .map_err(|_| "Ошибка генератора")?;
+        Ok(Self {
+            salt,
+            raw: derive(pin, device, &salt),
+            sequence: 0,
+        })
+    }
+    fn seal(&mut self, vault: &Vault) -> Result<Vec<u8>, &'static str> {
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("Исчерпан диапазон nonce")?;
+        let mut nonce = [0; 12];
+        nonce[4..].copy_from_slice(&self.sequence.to_be_bytes());
+        encrypt(vault, &self.salt, nonce, &self.raw)
+    }
+}
+pub(crate) fn seal_cached(
+    cache: &mut Option<SnapshotKey>,
+    vault: &Vault,
+    pin: &str,
+    device: &[u8; 32],
+) -> Result<Vec<u8>, &'static str> {
+    if cache.as_ref().is_none_or(|k| k.sequence >= 65536) {
+        *cache = Some(SnapshotKey::new(pin, device)?);
+    }
+    cache.as_mut().unwrap().seal(vault)
+}
 pub fn seal(vault: &Vault, pin: &str, device: &[u8; 32]) -> Result<Vec<u8>, &'static str> {
-    let mut salt = [0; 16];
+    let key = SnapshotKey::new(pin, device)?;
     let mut nonce = [0; 12];
     OsRng
-        .try_fill_bytes(&mut salt)
-        .and_then(|_| OsRng.try_fill_bytes(&mut nonce))
+        .try_fill_bytes(&mut nonce)
         .map_err(|_| "Ошибка генератора")?;
+    encrypt(vault, &key.salt, nonce, &key.raw)
+}
+fn encrypt(
+    vault: &Vault,
+    salt: &[u8; 16],
+    nonce: [u8; 12],
+    raw: &[u8; 32],
+) -> Result<Vec<u8>, &'static str> {
     let mut bytes = Zeroizing::new(serde_json::to_vec(vault).map_err(|_| "Ошибка записи")?);
     let mut header = MAGIC.to_vec();
     header.extend(salt);
     header.extend(nonce);
-    key(pin, device, &salt)?
+    key(raw)?
         .seal_in_place_append_tag(
             aead::Nonce::assume_unique_for_key(nonce),
             aead::Aad::from(&header),
@@ -51,7 +101,7 @@ pub fn open(bytes: &[u8], pin: &str, device: &[u8; 32]) -> Result<Vault, &'stati
         return Err(ERROR);
     }
     let mut body = Zeroizing::new(bytes[32..].to_vec());
-    let data = key(pin, device, &bytes[4..20])?
+    let data = key(derive(pin, device, &bytes[4..20]).as_ref())?
         .open_in_place(
             aead::Nonce::try_assume_unique_for_key(&bytes[20..32]).map_err(|_| ERROR)?,
             aead::Aad::from(&bytes[..32]),

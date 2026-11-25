@@ -77,8 +77,13 @@ impl Session {
         if self.missing_external_file()? {
             return Err("Файл хранилища отсутствует. Проверьте путь внизу окна");
         }
-        storage::persist(&self.path, &storage::seal(v, pin, &self.device)?)
-            .map_err(|_| "Ошибка сохранения")
+        let data = match &self.mcp {
+            Some(server) if self.active_pin() == Some(pin) => {
+                storage::seal_cached(&mut server.write_key.borrow_mut(), v, pin, &self.device)?
+            }
+            _ => storage::seal(v, pin, &self.device)?,
+        };
+        storage::persist(&self.path, &data).map_err(|_| "Ошибка сохранения")
     }
     pub(crate) fn active_pin(&self) -> Option<&str> {
         self.unlocked.as_ref().map(|(pin, _)| pin.as_str())
@@ -402,6 +407,9 @@ impl Session {
                         return Err("Введите PIN");
                     }
                     self.write(v, next)?;
+                    if let Some(server) = self.mcp.as_mut() {
+                        server.write_key.take();
+                    }
                     self.unlocked.as_mut().unwrap().0 = Zeroizing::new(next.to_owned());
                 }
                 Ok(Value::Null)

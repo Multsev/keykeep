@@ -58,3 +58,10 @@ JNIEXPORT jboolean JNICALL NATIVE(initializeDevice)(JNIEnv *env,jclass cls,jlong
 JNIEXPORT jboolean JNICALL NATIVE(erasing)(JNIEnv *env,jclass cls,jlong handle){
     return kk_erasing((void *)(intptr_t)handle);
 }
+
+JNIEXPORT jlong JNICALL NATIVE(mcpSignal)(JNIEnv *env,jclass cls,jlong handle){
+    return (jlong)(intptr_t)kk_mcp_signal((void *)(intptr_t)handle);
+}
+JNIEXPORT void JNICALL NATIVE(waitSignal)(JNIEnv *env,jclass cls,jlong signal){
+    kk_wait_signal((void *)(intptr_t)signal);
+}

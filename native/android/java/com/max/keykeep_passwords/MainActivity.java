@@ -25,6 +25,8 @@ public final class MainActivity extends Activity {
     private DeviceKeys keys;
     private LegacyVault legacy;
     private File vault;
+    private final java.util.concurrent.ExecutorService mcpWaiter=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private int pageGeneration;
     private long handle;
     private boolean foreground;
     private boolean reloadOnResume;
@@ -134,6 +136,14 @@ public final class MainActivity extends Activity {
             String name=args.getString("op");
             boolean migrate=!vault.exists() && legacy.exists();
             switch (name) {
+            case "mcpWait":{
+                int generation=pageGeneration;
+                long signal=VaultBridge.mcpSignal(handle);
+                if(signal==0){value(id,false);return;}
+                mcpWaiter.execute(()->{VaultBridge.waitSignal(signal);runOnUiThread(()->{
+                    if(generation==pageGeneration)try{value(id,true);}catch(Exception ignored){}
+                });});return;
+            }
             case "beginErase":error(id,"Недоступно");return;
             case "eraseVault":
                 JSONObject auth=core(args.put("op","beginErase"));
@@ -336,12 +346,13 @@ public final class MainActivity extends Activity {
         }
     }
     @Override protected void onStop(){
+        pageGeneration++;
         foreground=false;cancelPrompt();if(pinDialog!=null)pinDialog.dismiss();
         if(handle!=0)try{core(op("lock"));web.setVisibility(android.view.View.INVISIBLE);web.loadUrl("about:blank");reloadOnResume=true;}catch(Exception ignored){}
         super.onStop();
     }
     @Override protected void onDestroy(){
-        foreground=false;cancelPrompt();discardOwnerRequest();if(web!=null)web.destroy();if(handle!=0)VaultBridge.close(handle);handle=0;super.onDestroy();
+        foreground=false;cancelPrompt();discardOwnerRequest();if(web!=null)web.destroy();if(handle!=0)VaultBridge.close(handle);handle=0;mcpWaiter.shutdown();super.onDestroy();
     }
     @Override public void onBackPressed(){
         if(web!=null)web.evaluateJavascript("window.keykeepBack && window.keykeepBack()",result->{if(!"true".equals(result))MainActivity.super.onBackPressed();});

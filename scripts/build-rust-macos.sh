@@ -2,7 +2,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export MACOSX_DEPLOYMENT_TARGET=14.0
-cargo build --locked --release -p keykeep-core
 app="target/macos/KeyKeep.app"
 flags=()
 bundle_id=com.max.keykeep.desktop
@@ -15,8 +14,11 @@ elif [[ "${1:-}" == "--touch-id-test" ]]; then
     probe=touch-id.js
 fi
 if [[ -n "$probe" ]]; then
+    cargo build --locked --release -p keykeep-core --features native-ui-test
     bundle_id="com.max.keykeep.tests.${probe%.js}"
     flags=(-D UI_TEST)
+else
+    cargo build --locked --release -p keykeep-core
 fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/ui"
 cp native/macos/KeyKeep.icns "$app/Contents/Resources/"

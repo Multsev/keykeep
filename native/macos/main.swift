@@ -176,7 +176,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         testStarted = true
         do {
             let test = try String(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("smoke.js"))
-            webView.callAsyncJavaScript(test, arguments: ["startupImport":importURL != nil,"checkFinder":ProcessInfo.processInfo.environment["KEYKEEP_TEST_FINDER"] == "1"], in: nil, in: .page) { result in
+            webView.callAsyncJavaScript(test, arguments: ["benchCount":Int(ProcessInfo.processInfo.environment["KEYKEEP_MCP_BENCH_COUNT"] ?? "") ?? 0,"startupImport":importURL != nil,"checkFinder":ProcessInfo.processInfo.environment["KEYKEEP_TEST_FINDER"] == "1"], in: nil, in: .page) { result in
                 if let root = self.testRoot { try? FileManager.default.removeItem(at: root) }
                 switch result {
                 case .success(let value):
@@ -230,6 +230,15 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         }
         if activeID == VaultCatalog.empty && ["create","createFromFile","createFromKdbx"].contains(op) {reply(["error":"Выберите имя и расположение файла"]);return}
         if let origin=args["vaultContext"] as? String, origin != activeID {reply(["error":"Выбрано другое хранилище"]);return}
+        if op=="mcpWait" {
+            guard let signal=kk_mcp_signal(session) else {reply(["value":false]);return}
+            let address=UInt(bitPattern:signal)
+            DispatchQueue.global(qos:.userInitiated).async {
+                kk_wait_signal(UnsafeMutableRawPointer(bitPattern:address))
+                DispatchQueue.main.async {reply(["value":true])}
+            }
+            return
+        }
         if op=="collapsedFolders" {
             let key="collapsedFolders."+activeID
             if let ids=args["ids"] as? [String] {UserDefaults.standard.set(ids,forKey:key)}
@@ -348,7 +357,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             let right=args["right"] as? Bool == true
             for type:NSEvent.EventType in (right ? [.rightMouseDown,.rightMouseUp] : [.leftMouseDown,.leftMouseUp]) {
                 if let event=NSEvent.mouseEvent(with:type,location:point,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,eventNumber:0,clickCount:1,pressure:1) {
-                    NSApp.postEvent(event,atStart:false)
+                    window.sendEvent(event)
                 }
             }
             reply(["value":true]);return
@@ -362,7 +371,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         }
         if op == "testMcpPost" {
             guard let token=args["token"] as? String, let rpc=args["rpc"] as? [String:Any] else {reply(["error":"Invalid fixture"]);return}
-            var request=URLRequest(url:URL(string:"http://127.0.0.1:8766/mcp")!)
+            var request=URLRequest(url:URL(string:"http://127.0.0.1:18766/mcp")!)
             request.httpMethod="POST"
             request.setValue("Bearer "+token,forHTTPHeaderField:"Authorization")
             request.setValue("application/json",forHTTPHeaderField:"Content-Type")

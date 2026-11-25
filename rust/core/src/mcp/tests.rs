@@ -181,6 +181,18 @@ fn loopback_approval_modes_rotation_and_lock() {
             .len(),
         1
     );
+    s.call(json!({"op":"changePin","currentPin":"fixture-pin","newPin":"changed-pin"}))
+        .unwrap();
+    pump(
+        &mut s,
+        port,
+        &token,
+        tool("create_folder", json!({"name":"After rekey"})),
+        Some(true),
+    );
+    let ciphertext = std::fs::read(dir.path().join("vault.kk")).unwrap();
+    assert!(crate::storage::open(&ciphertext, "fixture-pin", &[17; 32]).is_err());
+    assert!(crate::storage::open(&ciphertext, "changed-pin", &[17; 32]).is_ok());
     s.call(op("mcpRotate")).unwrap();
     s.call(op("mcpStart")).unwrap();
     let port = s.mcp.as_ref().unwrap().transport.port();
@@ -199,7 +211,7 @@ fn loopback_approval_modes_rotation_and_lock() {
     s.call(op("lock")).unwrap();
     assert_eq!(worker.join().unwrap().0, 403);
     assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
-    s.call(json!({"op":"unlock","pin":"fixture-pin"})).unwrap();
+    s.call(json!({"op":"unlock","pin":"changed-pin"})).unwrap();
     assert_eq!(s.call(op("mcpStatus")).unwrap()["running"], false);
     assert_eq!(s.unlocked.as_ref().unwrap().1.mcp_token, new_token);
 }
@@ -213,12 +225,13 @@ fn official_client_initializes_and_lists_tools() {
     s.call(json!({"op":"create","pin":"fixture-pin"})).unwrap();
     let token = random_token().unwrap();
     s.unlocked.as_mut().unwrap().1.mcp_token = token.clone();
-    let transport = Transport::bind(0).unwrap();
+    let transport = Transport::bind(0, &token).unwrap();
     let port = transport.port();
     s.mcp = Some(Server {
         requests: 0,
         last_client: None,
         transport,
+        write_key: Default::default(),
         writable: false,
         allow_creation: false,
         approval: None,
@@ -251,4 +264,55 @@ asyncio.run(run())
         thread::sleep(Duration::from_millis(5));
     }
     assert!(client.wait().unwrap().success());
+}
+
+#[test]
+#[ignore = "loopback latency benchmark on an isolated vault"]
+fn sequential_write_latency() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::new(dir.path().join("benchmark.kk"), [21; 32]).unwrap();
+    s.call(json!({"op":"create","pin":"benchmark"})).unwrap();
+    s.call(json!({"op":"mcpStart"})).unwrap();
+    s.call(json!({"op":"mcpCreationMode","enabled":true}))
+        .unwrap();
+    let port = s.mcp.as_ref().unwrap().transport.port();
+    let token = s.unlocked.as_ref().unwrap().1.mcp_token.clone();
+    let count = std::env::var("KEYKEEP_BENCH_COUNT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(24);
+    let worker = thread::spawn(move || {
+        let mut elapsed = vec![];
+        for n in 0..count {
+            let start = Instant::now();
+            let (_, response) = client(
+                port,
+                &token,
+                tool(
+                    "create_password_entry",
+                    json!({"title":format!("Demo {n}"),"username":"demo","password":"test-only"}),
+                ),
+            )
+            .join()
+            .unwrap();
+            assert!(response["result"]["structuredContent"]["id"].is_string());
+            elapsed.push(start.elapsed().as_micros());
+        }
+        elapsed.sort();
+        println!(
+            "writes={count} total_ms={} p50_us={} p95_us={}",
+            elapsed.iter().sum::<u128>() / 1000,
+            elapsed[count / 2],
+            elapsed[count * 95 / 100]
+        );
+    });
+    while !worker.is_finished() {
+        s.call(json!({"op":"mcpPoll"})).unwrap();
+        s.mcp.as_ref().unwrap().transport.signal.wait();
+    }
+    worker.join().unwrap();
+    drop(s);
+    let mut s = Session::new(dir.path().join("benchmark.kk"), [21; 32]).unwrap();
+    s.call(json!({"op":"unlock","pin":"benchmark"})).unwrap();
+    assert_eq!(s.unlocked.as_ref().unwrap().1.entries.len(), count);
 }

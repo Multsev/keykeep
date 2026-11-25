@@ -49,6 +49,23 @@ for(const [value,weak] of [['',false],['7',true],['12345',true],['123456',false]
 el('pin').value=el('repeat').value='7';
 el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'create');
+if(benchCount>0){
+  await call('mcpCreationMode',{enabled:true});
+  const command=await call('mcpConnection');
+  const token=command.match(/KEYKEEP_MCP_TOKEN='([A-Za-z0-9_-]+)'/)[1];
+  const rpc=(name,args)=>call('testMcpPost',{token,rpc:{jsonrpc:'2.0',id:11,method:'tools/call',params:{name,arguments:args}}});
+  if(!(await call('mcpStatus')).allowCreation)throw Error('missing session grant');
+  const parent=(await rpc('create_folder',{name:'Latency fixture'})).result.structuredContent.id;
+  const start=performance.now();
+  for(let n=0;n<benchCount;n++){
+    const response=await rpc('create_password_entry',{folderId:parent,title:'Demo '+n,username:'demo',password:'test-only'});
+    if(!response.result?.structuredContent?.id)throw Error('benchmark write failed');
+  }
+  const writeTiming='PASS MCP '+benchCount+' sequential writes '+Math.round(performance.now()-start)+' ms';
+  const readback=(await rpc('list_vault_structure',{})).result.structuredContent;
+  if(readback.entries.filter(e=>e.folderId===parent).length!==benchCount)throw Error('benchmark count');
+  return writeTiming;
+}
 if(getComputedStyle(el('detail')).display!=='none' || el('entriesEmpty').hidden || !el('search').hidden)throw Error('empty workspace layout');
 el('searchToggle').click();if(el('search').hidden)throw Error('collapsed search');
 el('searchToggle').click();

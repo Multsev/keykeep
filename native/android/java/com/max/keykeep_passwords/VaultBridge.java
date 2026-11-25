@@ -8,5 +8,7 @@ final class VaultBridge {
     static native boolean erasing(long handle);
     static native boolean initializeDevice(long handle, byte[] key);
     static native boolean finishErasure(long handle, byte[] key);
+    static native long mcpSignal(long handle);
+    static native void waitSignal(long signal);
     static native void close(long handle);
 }

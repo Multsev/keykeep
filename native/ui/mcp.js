@@ -1,6 +1,15 @@
 'use strict';
 let mcpRunning=false, approvalKey=null, mcpTimer=null, mcpGeneration=0;
+let mcpRefreshTimer=null, activityAt=0;
+function scheduleVaultRefresh(generation){
+  if(mcpRefreshTimer!==null)return;
+  mcpRefreshTimer=setTimeout(async()=>{
+    mcpRefreshTimer=null;
+    if(mcpGeneration===generation)try{await refresh();}catch(e){mcpFeedback(e.message);}
+  },120);
+}
 function clearMcp(){
+  clearTimeout(mcpRefreshTimer);mcpRefreshTimer=null;
   mcpGeneration++;
   clearTimeout(mcpTimer);
   mcpTimer=null;mcpRunning=false;
@@ -13,16 +22,19 @@ function closeMcpApproval(){
 }
 async function pollMcp(generation){
   if(!mcpRunning || generation!==mcpGeneration)return;
+  let pending=false;
   try{
     const request=await call('mcpPoll');
     if(generation!==mcpGeneration)return;
-    if(!window.KeyKeep && el('generalDialog').open && !el('mcpPane').hidden){
+    if(!window.KeyKeep && el('generalDialog').open && !el('mcpPane').hidden && performance.now()-activityAt>350){
+      activityAt=performance.now();
       const state=await call('mcpStatus');
       if(generation!==mcpGeneration)return;
       showMcpActivity(state);
     }
     if(request===false){await renderMcp();return;}
-    if(request && Object.hasOwn(request,"changed")){if(request.changed)await refresh();return;}
+    if(request && Object.hasOwn(request,"changed")){if(request.changed)scheduleVaultRefresh(generation);return;}
+    pending=Boolean(request);
     if(!request)closeMcpApproval();
     else if(approvalKey!==request.key){
       approvalKey=request.key;el('mcpAllowCreation').hidden=!request.canAllowCreation;
@@ -35,7 +47,13 @@ async function pollMcp(generation){
   }catch{
     if(generation===mcpGeneration)clearMcp();
   }finally{
-    if(mcpRunning && generation===mcpGeneration)mcpTimer=setTimeout(()=>pollMcp(generation),200);
+    if(mcpRunning && generation===mcpGeneration){
+      if(pending)mcpTimer=setTimeout(()=>pollMcp(generation),200);
+      else {
+        try{await call('mcpWait');}catch{await new Promise(resolve=>setTimeout(resolve,200));}
+        if(mcpRunning && generation===mcpGeneration)pollMcp(generation);
+      }
+    }
   }
 }
 function showMcpActivity(state){

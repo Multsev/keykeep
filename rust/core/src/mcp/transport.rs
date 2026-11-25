@@ -1,4 +1,4 @@
-//! One loopback request at a time. Network I/O never runs on the UI thread.
+//! Bounded loopback HTTP workers wake the vault owner when a request is ready. Network I/O never runs on the UI thread.
 use super::Request;
 use serde_json::{Value, json};
 use std::{
@@ -11,67 +11,151 @@ use std::{
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
+use std::os::{fd::AsRawFd, unix::net::UnixStream};
+use std::sync::{
+    Arc, Condvar, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+
+// One wake per enqueued request. Detached native waiters own only this signal.
+#[derive(Default)]
+pub(crate) struct Signal {
+    state: Mutex<(usize, bool)>,
+    wake: Condvar,
+}
+impl Signal {
+    pub(crate) fn wait(&self) {
+        let state = self.state.lock().unwrap();
+        let (mut state, _) = self
+            .wake
+            .wait_timeout_while(state, Duration::from_secs(1), |s| s.0 == 0 && !s.1)
+            .unwrap();
+        state.0 = state.0.saturating_sub(1);
+    }
+    fn notify(&self) {
+        self.state.lock().unwrap().0 += 1;
+        self.wake.notify_one();
+    }
+}
 pub struct Transport {
-    listener: TcpListener,
-    incoming: Option<mpsc::Receiver<Request>>,
+    port: u16,
+    incoming: mpsc::Receiver<Request>,
+    stop: UnixStream,
+    acceptor: Option<thread::JoinHandle<()>>,
+    pub(crate) signal: Arc<Signal>,
+}
+impl Drop for Transport {
+    fn drop(&mut self) {
+        self.signal.state.lock().unwrap().1 = true;
+        self.signal.wake.notify_all();
+        let _ = self.stop.shutdown(std::net::Shutdown::Both);
+        if let Some(thread) = self.acceptor.take() {
+            let _ = thread.join();
+        }
+    }
 }
 impl Transport {
-    pub fn bind(port: u16) -> Result<Self, &'static str> {
+    pub fn bind(port: u16, token: &str) -> Result<Self, &'static str> {
         let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|_| "Порт MCP занят")?;
         listener
             .set_nonblocking(true)
             .map_err(|_| "Не удалось запустить MCP")?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| "Ошибка адреса MCP")?
+            .port();
+        let (stop, cancel) = UnixStream::pair().map_err(|_| "Ошибка запуска MCP")?;
+        let (tx, incoming) = mpsc::channel();
+        let signal = Arc::new(Signal::default());
+        let ready = signal.clone();
+        let token = Arc::new(Zeroizing::new(token.to_owned()));
+        let acceptor = thread::Builder::new()
+            .name("keykeep-mcp-listener".into())
+            .spawn(move || {
+                let active = Arc::new(AtomicUsize::new(0));
+                let mut events = [
+                    libc::pollfd {
+                        fd: listener.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                    libc::pollfd {
+                        fd: cancel.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                ];
+                loop {
+                    // Both descriptors are owned by this thread until it exits.
+                    if unsafe { libc::poll(events.as_mut_ptr(), 2, -1) } < 0 {
+                        if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                        {
+                            continue;
+                        }
+                        break;
+                    }
+                    if events[1].revents != 0 {
+                        break;
+                    }
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        continue;
+                    };
+                    if active.load(Ordering::Acquire) >= 8 {
+                        continue;
+                    }
+                    let (tx, ready, token, workers) =
+                        (tx.clone(), ready.clone(), token.clone(), active.clone());
+                    active.fetch_add(1, Ordering::AcqRel);
+                    if thread::Builder::new()
+                        .name("keykeep-mcp-http".into())
+                        .spawn(move || {
+                            if stream.set_nonblocking(false).is_ok() {
+                                let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                                match receive(&mut stream, &token) {
+                                    Ok(message) => {
+                                        let (reply, rx) = mpsc::sync_channel(1);
+                                        let request = Request {
+                                            message,
+                                            reply,
+                                            expires: Instant::now() + Duration::from_secs(30),
+                                        };
+                                        if tx.send(request).is_ok() {
+                                            ready.notify();
+                                        }
+                                        match rx.recv_timeout(Duration::from_secs(30)) {
+                                            Ok(value) => respond(
+                                                &mut stream,
+                                                if value.is_some() { 200 } else { 202 },
+                                                value,
+                                            ),
+                                            Err(_) => respond(&mut stream, 403, None),
+                                        }
+                                    }
+                                    Err(code) => respond(&mut stream, code, None),
+                                }
+                            }
+                            workers.fetch_sub(1, Ordering::AcqRel);
+                        })
+                        .is_err()
+                    {
+                        active.fetch_sub(1, Ordering::AcqRel);
+                    }
+                }
+            })
+            .map_err(|_| "Ошибка запуска MCP")?;
         Ok(Self {
-            listener,
-            incoming: None,
+            port,
+            incoming,
+            stop,
+            acceptor: Some(acceptor),
+            signal,
         })
     }
     pub fn port(&self) -> u16 {
-        self.listener.local_addr().unwrap().port()
+        self.port
     }
-    pub fn poll(&mut self, token: &str) -> Option<Request> {
-        if let Some(rx) = &self.incoming {
-            match rx.try_recv() {
-                Ok(req) => return Some(req),
-                Err(mpsc::TryRecvError::Empty) => return None,
-                Err(mpsc::TryRecvError::Disconnected) => self.incoming = None,
-            }
-        }
-        let (stream, _) = self.listener.accept().ok()?;
-        let (tx, rx) = mpsc::sync_channel(1);
-        self.incoming = Some(rx);
-        let token = Zeroizing::new(token.to_owned());
-        let _ = thread::Builder::new()
-            .name("keykeep-mcp".into())
-            .spawn(move || {
-                let mut stream = stream;
-                if stream.set_nonblocking(false).is_err() {
-                    return;
-                }
-                let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-                match receive(&mut stream, &token) {
-                    Ok(message) => {
-                        let (reply, rx) = mpsc::sync_channel(1);
-                        let request = Request {
-                            message,
-                            reply,
-                            expires: Instant::now() + Duration::from_secs(30),
-                        };
-                        if tx.send(request).is_err() {
-                            respond(&mut stream, 403, None);
-                            return;
-                        }
-                        match rx.recv_timeout(Duration::from_secs(30)) {
-                            Ok(value) => {
-                                respond(&mut stream, if value.is_some() { 200 } else { 202 }, value)
-                            }
-                            Err(_) => respond(&mut stream, 403, None),
-                        }
-                    }
-                    Err(code) => respond(&mut stream, code, None),
-                }
-            });
-        None
+    pub(super) fn poll(&self) -> Option<Request> {
+        self.incoming.try_recv().ok()
     }
 }
 

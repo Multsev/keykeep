@@ -135,3 +135,17 @@ fn erasure_resumes_after_restart_and_preserves_unrelated_files() {
     assert!(open(&data, PIN, &DEVICE).is_err());
     assert!(open(&data, PIN, &[9; 32]).is_ok());
 }
+
+#[test]
+fn session_snapshot_nonce_and_rotation() {
+    let vault = Vault::from_android(None, None).unwrap();
+    let mut key = None;
+    let first = seal_cached(&mut key, &vault, PIN, &DEVICE).unwrap();
+    let next = seal_cached(&mut key, &vault, PIN, &DEVICE).unwrap();
+    assert_eq!(&first[4..20], &next[4..20]);
+    assert_ne!(&first[20..32], &next[20..32]);
+    key.as_mut().unwrap().sequence = 65536;
+    let rotated = seal_cached(&mut key, &vault, PIN, &DEVICE).unwrap();
+    assert_ne!(&next[4..20], &rotated[4..20]);
+    assert!(open(&rotated, PIN, &DEVICE).is_ok());
+}

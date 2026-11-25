@@ -10,10 +10,15 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::{RngCore, rngs::OsRng};
 use serde_json::{Value, json};
 use std::{sync::mpsc::SyncSender, time::Instant};
+pub(crate) use transport::Signal;
 use transport::{Transport, error};
 use uuid::Uuid;
 
-const MCP_PORT: u16 = 8766;
+const MCP_PORT: u16 = if cfg!(feature = "native-ui-test") {
+    18766
+} else {
+    8766
+};
 
 type Result<T> = std::result::Result<T, &'static str>;
 struct Request {
@@ -39,7 +44,8 @@ struct Approval {
     title: String,
 }
 pub struct Server {
-    transport: Transport,
+    pub(crate) transport: Transport,
+    pub(crate) write_key: std::cell::RefCell<Option<crate::storage::SnapshotKey>>,
     writable: bool,
     allow_creation: bool,
     requests: u64,
@@ -72,7 +78,7 @@ impl Server {
             self.approval = None;
         }
         if self.approval.is_none()
-            && let Some(request) = self.transport.poll(&v.mcp_token)
+            && let Some(request) = self.transport.poll()
         {
             self.dispatch(v, request);
         }
@@ -223,10 +229,13 @@ impl Session {
             ),
             "mcpStart" => {
                 if self.mcp.is_none() {
-                    let transport = Transport::bind(if cfg!(test) { 0 } else { MCP_PORT })?;
-                    self.ensure_mcp_token()?;
+                    let transport = Transport::bind(
+                        if cfg!(test) { 0 } else { MCP_PORT },
+                        self.ensure_mcp_token()?,
+                    )?;
                     self.mcp = Some(Server {
                         transport,
+                        write_key: Default::default(),
                         requests: 0,
                         last_client: None,
                         writable: false,
