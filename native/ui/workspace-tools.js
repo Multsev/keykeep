@@ -39,20 +39,30 @@ function installWorkspaceTools(){
   installCardTools();
   let entryDestination,contextItem;
   function openCreationMenu(e){
-    e.preventDefault();
+    if(e.target.closest('input,textarea,select,[contenteditable=true]'))return;
     const inTree=e.currentTarget===el('folders');
-    if(e.target.closest('#showDeleted') || (!inTree && trashSelected))return;
     const targetFolder=e.target.closest('[data-folder]')?.dataset.folder;
-    const entry=e.target.closest('[data-entry]');
+    const entry=e.target.closest('[data-entry]'),draft=e.target.closest('[data-draft-folder]');
+    const trash=e.target.closest('[data-trash-id]'),bin=e.target.closest('#showDeleted');
+    if(!inTree && trashSelected && !trash)return;
+    if(e.target.closest('button') && !(targetFolder || entry || draft || trash || bin))return;
+    e.preventDefault();
     contextItem=inTree && targetFolder && targetFolder!=='root'
       ? {kind:'folder',id:targetFolder,from:folderIndex.get(targetFolder).parentId}
-      : entry?{kind:'entry',id:entry.dataset.entry,from:entry.dataset.folder}:null;
-    el('contextMove').hidden=!contextItem;
-    el('contextRename').hidden=el('contextDelete').hidden=contextItem?.kind!=='folder';
+      : entry?{kind:'entry',id:entry.dataset.entry,from:entry.dataset.folder,title:entry.title}:null;
+    const creation=!entry && !draft && !trash && !bin;
+    el('contextOpen').hidden=!(entry || draft || bin);
+    el('contextOpen').onclick=()=>{closeCatalogMenu();(entry || draft || bin).click();};
+    el('contextRestore').hidden=!trash;
+    el('contextRestore').onclick=()=>{closeCatalogMenu();trash.querySelector('button').click();};
+    el('contextNewEntry').hidden=!creation;
+    el('folderCreateAction').hidden=!inTree || !creation;
+    el('contextMove').hidden=el('contextRename').hidden=el('contextDelete').hidden=!contextItem;
+    el('contextRename').textContent=entry?'Переименовать запись…':'Переименовать папку…';
+    el('contextDelete').textContent=entry?'Удалить запись…':'Удалить папку…';
     el('folderCreateAction').textContent=contextItem?.kind==='folder'?'Создать подпапку…':'Создать папку…';
-    entryDestination=targetFolder || folder;
-    folderCreateParent=inTree?(targetFolder || 'root'):folder;
-    el('folderCreateAction').hidden=!inTree;
+    entryDestination=inTree?(targetFolder || 'root'):folder;
+    folderCreateParent=entryDestination;
     showContextMenu(el('folderMenu'),e);
   }
   el('folders').oncontextmenu=el('entries').oncontextmenu=openCreationMenu;
@@ -67,9 +77,17 @@ function installWorkspaceTools(){
     closeCatalogMenu();
     el('folderName').value='';el('folderCreateDialog').showModal();el('folderName').focus();
   };
-  el('contextRename').onclick=()=>{closeCatalogMenu();renameInline(contextItem.id);};
+  el('contextRename').onclick=()=>{
+    const item=contextItem;closeCatalogMenu();
+    if(item.kind==='folder'){renameInline(item.id);return;}
+    promptRename('Переименовать запись',item.title,async name=>{
+      await call('renameEntry',{id:item.id,title:name,time:new Date().toISOString()});
+      if(current?.id===item.id){current.title=name;el('title').value=name;updateEntryPath();}
+      await refresh();
+    });
+  };
   el('contextMove').onclick=()=>{closeCatalogMenu();chooseDestination(contextItem);};
-  on('contextDelete','click',async()=>{closeCatalogMenu();await confirmFolderRemoval(contextItem.id);});
+  on('contextDelete','click',async()=>{closeCatalogMenu();if(contextItem.kind==='entry')confirmEntryRemoval(contextItem.id,contextItem.title);else await confirmFolderRemoval(contextItem.id);});
   el('moveCancel').onclick=()=>el('moveDialog').close();
   on('moveForm','submit',async()=>{await moveTreeItem(moveTarget,el('moveTo').value);el('moveDialog').close();});
   on('undoMove','click',async()=>{if(lastMove)await moveTreeItem(lastMove,lastMove.to,true);});

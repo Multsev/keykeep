@@ -126,7 +126,7 @@ function paintDraft(){
   const drafts=Array.from(draftMap.values()).filter(d=>folder==='root' || d.folderId===folder);
   setChildren(el('draftRow'),...drafts.map(d=>{
     const b=actionButton(d.title || 'Новая запись',()=>openDraft(d.folderId));
-    const tag=document.createElement('small');tag.textContent='Черновик';b.append(tag);return b;
+    b.dataset.draftFolder=d.folderId;const tag=document.createElement('small');tag.textContent='Черновик';b.append(tag);return b;
   }));
   el('draftRow').hidden=!drafts.length;
   if(drafts.length)el('entriesEmpty').hidden=true;

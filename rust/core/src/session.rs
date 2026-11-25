@@ -585,7 +585,7 @@ impl Session {
                 self.deleted_entry = None;
                 Ok(Value::Null)
             }
-            "save" | "addFolder" => {
+            "save" | "renameEntry" | "addFolder" => {
                 let mut next = v.clone();
                 let id = if op == "addFolder" {
                     let parent = arg("parent")?;
@@ -601,8 +601,21 @@ impl Session {
                     });
                     id
                 } else {
-                    let values: Values = serde_json::from_value(r["values"].clone())
-                        .map_err(|_| "Некорректные поля")?;
+                    let values: Values = if op == "renameEntry" {
+                        let id = arg("id")?;
+                        let mut values = v
+                            .entries
+                            .iter()
+                            .find(|e| e.id == id)
+                            .ok_or("Запись отсутствует")?
+                            .values
+                            .clone();
+                        values.title = arg("title")?.trim().to_owned();
+                        values
+                    } else {
+                        serde_json::from_value(r["values"].clone())
+                            .map_err(|_| "Некорректные поля")?
+                    };
                     Self::save_entry(
                         &mut next,
                         arg("id")?,

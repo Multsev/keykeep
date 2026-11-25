@@ -6,11 +6,13 @@ function closeCatalogMenu(restoreFocus=false){
   activeContextMenu.hidden=true;
   activeContextMenu=null;
   if(restoreFocus && contextTrigger?.isConnected)contextTrigger.focus();
+  contextTrigger?.classList.remove('context-target');
   contextTrigger=null;
 }
 function showContextMenu(menu,event){
   closeCatalogMenu();
-  contextTrigger=event.target.closest('button') || document.activeElement;
+  contextTrigger=event.target.closest('[data-trash-id],.tree-line,.vault-row,[data-entry],[data-draft-folder],#showDeleted') || event.target.closest('button');
+  contextTrigger?.classList.add('context-target');
   activeContextMenu=menu;
   menu.hidden=false;
   menu.showPopover();
@@ -19,7 +21,7 @@ function showContextMenu(menu,event){
   menu.querySelector('button:not([hidden])').focus();
 }
 document.addEventListener('pointerdown',e=>{
-  if(activeContextMenu && e.button===0 && !activeContextMenu.contains(e.target))closeCatalogMenu();
+  if(activeContextMenu && !activeContextMenu.contains(e.target))closeCatalogMenu();
 },true);
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape' && activeContextMenu){
@@ -38,28 +40,33 @@ function openCatalogMenu(event,vault,trash){
   el('menuDelete').onclick=()=>{closeCatalogMenu();trash.click();};
   el('menuRename').onclick=()=>{
     closeCatalogMenu();
+    promptRename('Переименовать хранилище',vault.name,async name=>{
+      await call('vaultRename',{id:vault.id,name});await refreshCatalog();
+    });
+  };
+  showContextMenu(menu,event);
+}
+function promptRename(title,original,save){
+    el('renameVaultTitle').textContent=title;
+    closeCatalogMenu();
     const dialog=el('vaultRename'), input=el('vaultDisplayName');
     el('renameVaultError').textContent='';
-    input.value=vault.name;
+    input.value=original;
     el('renameVaultForm').onsubmit=async e=>{
       e.preventDefault();
       const name=input.value.trim();
       if(!name){el('renameVaultError').textContent='Введите название';input.focus();return;}
       try{
-        await call('vaultRename',{id:vault.id,name});
-        dialog.close();
-        await refreshCatalog();
+        await save(name);dialog.close();
       }catch(error){el('renameVaultError').textContent=error.message;}
     };
     dialog.showModal();input.select();
-  };
-  showContextMenu(menu,event);
 }
 document.getElementById('vaultCatalog').oncontextmenu=e=>{
   if(!e.target.closest('button,dialog,[popover]'))openCatalogMenu(e,null,null);
 };
 document.getElementById('renameCancel').onclick=()=>el('vaultRename').close();
-document.getElementById('catalogMenu').onkeydown=e=>{
+for(const menu of [document.getElementById('catalogMenu'),document.getElementById('folderMenu')])menu.onkeydown=e=>{
   if(!['ArrowDown','ArrowUp'].includes(e.key))return;
   const buttons=Array.from(e.currentTarget.querySelectorAll('button:not([hidden])'));
   const index=buttons.indexOf(document.activeElement);

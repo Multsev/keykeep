@@ -539,18 +539,19 @@ on('undoDelete','click',async()=>{
   if(token===undoToken)hideUndo();
   await refresh();
 });
-on('deleteEntry','click',()=>{
-  const id=current.id;
-  requestDeletion('Удалить запись «'+current.title+'»?', 'Запись вместе с историей переместится в корзину хранилища.',async()=>{
+on('deleteEntry','click',()=>confirmEntryRemoval(current.id,current.title));
+function confirmEntryRemoval(id,title){
+  requestDeletion('Удалить запись «'+title+'»?', 'Запись вместе с историей переместится в корзину хранилища.',async()=>{
     const rect=metal.bounds(metal.find('data-entry',id));const token=await call('deleteEntry',{id,confirmed:true});metal.remove(rect);
     hideUndo();undoToken=token;el('undoNotice').hidden=false;
     undoTimer=setTimeout(()=>{
       if(undoToken!==token)return;
       hideUndo();call('forgetDelete',{token}).catch(()=>{});
     },30000);
-    current=null;clearEntryExtras();el('editor').reset();el('editor').hidden=true;screen('entries');await refresh();
+    if(current?.id===id){current=null;clearEntryExtras();el('editor').reset();el('editor').hidden=true;screen('entries');}
+    await refresh();
   });
-});
+}
 
 on('eraseVault','click',()=>{el('eraseDialog').showModal();el('cancelErase').focus();});
 on('cancelErase','click',()=>el('eraseDialog').close());
@@ -585,7 +586,7 @@ function renderDeleted(items,query){
       finally{button.disabled=false;}
     });
     button.setAttribute('aria-label','Восстановить «'+item.name+'»');
-    line.className='deleted-row';line.append(label,button);return line;
+    line.dataset.trashId=item.id;line.className='deleted-row';line.append(label,button);return line;
   }));
   el('entriesEmpty').hidden=matches.length>0;
   el('entriesEmpty').textContent=items.length?'Ничего не найдено':'Корзина пуста';
