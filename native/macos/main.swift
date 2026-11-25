@@ -37,9 +37,11 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
     var session: UnsafeMutableRawPointer?
     var fingerprint: Fingerprint!
     var prompt: LAContext?
+    let diskAccount=DiskAccount()
     var oauthCallback: String?
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url=urls.first, url.scheme=="keykeep",url.host=="oauth",url.path=="/callback" else {return}
+        if diskAccount.callback(url,completion:{self.web?.evaluateJavaScript("window.sharedDiskChanged?.()")}) {return}
         oauthCallback=url.absoluteString
         web?.evaluateJavaScript("window.keykeepOAuthReady?.()")
     }
@@ -205,6 +207,17 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                   let answer = kk_call(session, query) else { return ["error":"Ошибка операции"] }
             defer { kk_free_text(answer) }
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
+        }
+        if ["accountStatus","accountSave","accountConnect","accountDisconnect"].contains(op) {
+            do {
+                switch op {
+                case "accountSave","accountConnect": try diskAccount.configure(args["client"] as? String ?? "",connect:op=="accountConnect")
+                case "accountDisconnect": try diskAccount.disconnect()
+                default: break
+                }
+                reply(["value":try diskAccount.status()])
+            } catch {reply(["error":error.localizedDescription])}
+            return
         }
         if activeID == VaultCatalog.empty && ["create","createFromFile","createFromKdbx"].contains(op) {reply(["error":"Выберите имя и расположение файла"]);return}
         if let origin=args["vaultContext"] as? String, origin != activeID {reply(["error":"Выбрано другое хранилище"]);return}
@@ -480,8 +493,21 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             }
             do { try fingerprint.disable() } catch { reply(["error":"Не удалось обновить настройки Touch ID"]); return }
         }
+        if op.hasPrefix("disk") {
+            var request=args
+            request.removeValue(forKey:"accountToken")
+            request.removeValue(forKey:"accountBinding")
+            do {
+                let account=try diskAccount.credentials()
+                request["accountBinding"]=account.binding
+                request["accountToken"]=account.token
+                reply(core(request))
+            } catch {reply(["error":"Не удалось прочитать подключение Яндекс.Диска"])}
+            return
+        }
         reply(core(args))
     }
+    @objc func openPreferences(){web?.evaluateJavaScript("document.getElementById('generalSettings')?.click()")}
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ note: Notification) { forgetSessions();kk_close(session); session = nil }
 }
@@ -492,6 +518,8 @@ app.delegate = delegate
 app.setActivationPolicy(.regular)
 let menu = NSMenu()
 let appMenu = NSMenu()
+appMenu.addItem(withTitle:"Настройки…",action:#selector(Desktop.openPreferences),keyEquivalent:",").target=delegate
+appMenu.addItem(.separator())
 appMenu.addItem(withTitle: "Завершить KeyKeep", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 let appItem = NSMenuItem()
 appItem.submenu = appMenu

@@ -97,3 +97,20 @@ unsafe extern "C" fn kk_initialize_device(s: *mut Session, key: *const u8) -> bo
     }
     s.initialize_device(unsafe { key.cast::<[u8; 32]>().read() })
 }
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn kk_shared_oauth(request: *const c_char) -> *mut c_char {
+    let result = (|| {
+        if request.is_null() {
+            return Err("Пустой запрос");
+        }
+        let query = serde_json::from_slice(unsafe { CStr::from_ptr(request) }.to_bytes())
+            .map_err(|_| "Некорректный запрос")?;
+        crate::yandex::shared_oauth(query)
+    })();
+    let response = match result {
+        Ok(value) => json!({"value":value}),
+        Err(error) => json!({"error":error}),
+    };
+    CString::new(response.to_string()).unwrap().into_raw()
+}

@@ -51,6 +51,7 @@ async function reset(promptOnOpen=false) {
   if(window.clearMcp)window.clearMcp();
   pendingAutoUnlock=false;
   closeSettings();
+  el('generalDialog').close();el('folderCreateDialog').close();
   clearEntryExtras();
   el('folderDialog').close();
   el('confirmDeletion').close();
@@ -103,6 +104,7 @@ on('revealVaultFile','click',()=>call('vaultRevealFile'));
 el('toggleCatalog').onclick=()=>setDrawer(!document.body.classList.contains('drawer-open'));
 async function refreshCatalog(){
   const data=await call('vaultCatalog');
+  installWorkspaceTools();
   document.body.classList.add('mac-vaults');
   el('vaultCatalog').hidden=false;
   activeVaultId=data.active;rememberWorkspace=data.remembered;
@@ -223,7 +225,7 @@ async function refresh() {
     const button=row('　'.repeat(depth) + f.name,async () => {folder=f.id;current=null;el('editor').hidden=true;screen('entries');await refresh();},folder===f.id);
     const count=document.createElement('small');
     count.textContent='Папок: '+subfolders.length+' · Записей: '+(data.entryCounts[f.id] || 0);
-    button.append(count);tree.push(button);
+    button.dataset.folder=f.id;button.append(count);tree.push(button);
     subfolders.sort((a,b)=>a.name.localeCompare(b.name,'ru')).forEach(c=>append(c,depth+1,path));
   }
   append(data.folders.find(f=>f.id==='root'),0);
@@ -231,6 +233,8 @@ async function refresh() {
   setChildren(el('entryFolder'), ...options);
   el('entryFolder').value = selectedFolder || folder;
   setChildren(el('tree'), ...tree);
+  el('entriesEmpty').textContent=query?'Ничего не найдено':'Пока нет записей';
+  el('entriesEmpty').hidden=Boolean(data.entries.length);
   setChildren(el('rows'), ...data.entries.map(e=>{
     const b=row(e.title,async()=>{edit(await call('get',{id:e.id}));await refresh();},current && current.id===e.id);
     const sub=document.createElement('small');sub.textContent=query?[paths.get(e.folderId),e.username].filter(Boolean).join(' · '):e.username;b.append(sub);return b;
@@ -263,9 +267,10 @@ async function showEntries(){
   el('gate').hidden=true;el('vault').hidden=false;screen('folders');
   let previous;
   if(!window.KeyKeep){
-    setDrawer(false);await refreshCatalog();el('search').focus();
+    setDrawer(false);await refreshCatalog();el('searchToggle').focus();
     previous=workspaces.get(activeVaultId);workspaces.delete(activeVaultId);
     if(previous){folder=previous.folder;el('search').value=previous.query;}
+    setSearchOpen(Boolean(el('search').value));
   }
   await refresh();
   if(previous){if(previous.editor)edit(previous.editor);screen(previous.screen);}
@@ -314,7 +319,7 @@ function closeSettings() {
   clearSettings();
 }
 el('security').addEventListener('close',clearSettings);
-on('settings','click',async()=>{clearSettings();el('security').showModal();await renderBio();await renderFiles();await renderDisk();await renderMcp();});
+on('settings','click',async()=>{clearSettings();el('disk').inert=true;el('security').showModal();try{await renderDisk();}finally{el('disk').inert=false;}await renderBio();await renderFiles();await renderMcp();});
 on('dismiss','click',closeSettings);
 on('showPin','click',async()=>{
   if(el('revealed').textContent){el('revealed').textContent='';return;}
@@ -346,7 +351,7 @@ on('bioUnlock','click',async()=>{
   finally{el('bioUnlock').disabled=false;}
   await finishLogin();
 });
-on('newFolder','submit',async()=>{folder=await call('addFolder',{name:el('folderName').value,parent:folder});el('newFolder').reset();screen('entries');await refresh();});
+on('newFolder','submit',async()=>{folder=await call('addFolder',{name:el('folderName').value,parent:el('folderCreateDialog').open?folderCreateParent:folder});el('folderCreateDialog').close();el('newFolder').reset();current=null;el('editor').hidden=true;screen('entries');await refresh();});
 on('add','click',()=>edit());
 on('editor','submit',async()=>{
   const values={folderId:el('entryFolder').value,customFields:collectFields()};
@@ -377,7 +382,7 @@ on('search','input',async()=>{screen('entries');await refresh();});
 on('back','click',()=>screen(document.body.dataset.screen==='detail'?'entries':'folders'));
 document.addEventListener('keydown',e=>{
   if(el('vault').hidden)return;
-  if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(e.key==='n')edit();else el('search').focus();}
+  if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(document.querySelector('dialog[open]'))return;if(e.key==='n')edit();else if(window.KeyKeep)el('search').focus();else setSearchOpen(true);}
   const catalogRow=e.target.closest('.vault-row');
   if(catalogRow && ['ArrowUp','ArrowDown'].includes(e.key)){
     e.preventDefault();

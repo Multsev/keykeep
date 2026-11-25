@@ -350,3 +350,53 @@ fn queued_upload_survives_restart_and_obeys_original_confirmation() {
         false
     );
 }
+
+#[test]
+fn shared_account_requires_opt_in_and_never_persists_its_token_in_the_vault() {
+    use crate::session::Session;
+    let mock = Mock::new();
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("vault.kk");
+    let mut session = Session::new(path.clone(), [7; 32]).unwrap();
+    session
+        .call(json!({"op":"create","pin":"fixture-pin"}))
+        .unwrap();
+    let upload = json!({"op":"diskUpload","accountBinding":"account-a","accountToken":"synthetic","password":"fixture","expected":null,"confirmed":true});
+    assert!(session.call(upload.clone()).is_err());
+    session.call(json!({"op":"diskBind","enabled":true,"folder":"Personal","accountBinding":"account-a"})).unwrap();
+    session.unlocked.as_mut().unwrap().1.disk.mock_api = Some(format!("{}/resources", mock.root));
+    let mut foreign = upload.clone();
+    foreign["accountBinding"] = json!("account-b");
+    assert!(session.call(foreign).is_err());
+    session.call(upload.clone()).unwrap();
+    let uploaded = loop {
+        let result = session.call(json!({"op":"diskPoll"})).unwrap();
+        if result["pending"] == false {
+            break result["result"]["uploaded"].clone();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(uploaded, true);
+    assert!(
+        mock.files
+            .lock()
+            .unwrap()
+            .data
+            .keys()
+            .any(|p| p.ends_with("/Personal/keykeep-vault.kdbx"))
+    );
+    drop(session);
+    let mut session = Session::new(path, [7; 32]).unwrap();
+    session
+        .call(json!({"op":"unlock","pin":"fixture-pin"}))
+        .unwrap();
+    assert!(session.unlocked.as_ref().unwrap().1.disk.token.is_empty());
+    assert_eq!(
+        session.call(json!({"op":"diskStatus"})).unwrap()["connected"],
+        false
+    );
+    session
+        .call(json!({"op":"diskBind","enabled":false}))
+        .unwrap();
+    assert!(session.call(upload).is_err());
+}

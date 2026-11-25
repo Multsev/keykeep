@@ -9,7 +9,11 @@ const until = async (condition, step) => {
 if(!/^\d+\.\d+\.\d+/.test(el('buildVersion').textContent) || !/^\d{4}-\d{2}-\d{2}$/.test(el('buildDate').textContent))throw Error('build metadata');
 await until(()=>!el('emptyCreate').hidden && el('access').hidden,'empty vault catalog');
 if(el('catalogRows').children.length || el('workspaceTitle').textContent || !el('vaultLocation').hidden)throw Error('phantom vault');
-el('emptyCreate').click();
+el('generalSettings').click();await until(()=>el('generalDialog').open,'general settings without vault');
+el('accountClient').value='fixture-public-client';el('accountSave').click();
+await until(()=>el('accountMessage').textContent==='Настройки сохранены','save global account');
+el('accountConnect').click();await until(()=>el('accountMessage').textContent.includes('браузере'),'start global OAuth without vault');
+el('generalClose').click();el('emptyCreate').click();
 await until(()=>!catalogBusy && !el('access').hidden && el('activeVaultName').textContent==='Основное','choose folder and name first');
 if(startupImport){
   await until(()=>el('startupExchange').open && el('startupDbName').textContent,'selected database');
@@ -31,7 +35,16 @@ await until(()=>el('enter').textContent==='Создать хранилище','i
 el('pin').value=el('repeat').value='test-pin';
 el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'create');
+if(getComputedStyle(el('detail')).display!=='none' || el('entriesEmpty').hidden || !el('search').hidden)throw Error('empty workspace layout');
+el('searchToggle').click();if(el('search').hidden)throw Error('collapsed search');
+el('searchToggle').click();
+el('folders').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:40,clientY:100,button:2}));
+el('folderCreateAction').click();if(!el('folderCreateDialog').open)throw Error('folder context action');
+el('folderName').value='Папка из меню';el('newFolder').requestSubmit();
+await until(()=>!el('folderCreateDialog').open && el('tree').textContent.includes('Папка из меню'),'created folder');
+el('tree').firstChild.click();await until(()=>folder==='root','select root');
 el('add').click();
+if(getComputedStyle(el('detail')).display==='none')throw Error('missing editor');
 el('title').value='Тестовая запись';
 if(el('editor').checkValidity())throw Error('empty credentials accepted');
 if(formatLogin('8 999 123 45 67')!=='+7 (999) 123-45-67' || formatLogin('admin')!=='admin')throw Error('contact login format');
@@ -78,14 +91,13 @@ await until(()=>el('undoNotice').hidden && el('rows').children.length===1,'undo 
 if(JSON.stringify(original)!==JSON.stringify(await call('get',{id:original.id})))throw Error('undo changed entry or history');
 
 el('settings').click();
-await until(()=>el('security').open,'settings');
-el('disk').open=true;el('diskClient').value='fixture-public-client';el('diskFolder').value='FixtureDisk';el('diskSave').click();
+await until(()=>el('security').open && !el('disk').inert && !el('diskEnableLabel').hidden,'settings');
+el('disk').open=true;
+if((await call('diskStatus')).enabled)throw Error('vault opted in without permission');
+el('diskEnabled').click();el('diskFolder').value='FixtureDisk';el('diskSave').click();
 await until(()=>el('diskMessage').textContent==='Настройки сохранены','disk settings');
-if((await call('diskStatus')).folder!=='FixtureDisk')throw Error('disk folder not saved');
-const authorization=new URL(await call('diskAuthorize'));
-if(authorization.hostname!=='oauth.yandex.ru' || authorization.searchParams.get('code_challenge_method')!=='S256')throw Error('OAuth PKCE');
-try{await call('diskCallback',{callback:'keykeep://oauth/callback?code=fake&state=wrong'});throw Error('unexpected callback success');}
-catch(error){if(!error.message.includes('OAuth'))throw error;}
+const binding=await call('diskStatus');
+if(!binding.enabled || binding.folder!=='FixtureDisk' || binding.connected)throw Error('wrong per-vault settings');
 el('disk').open=false;
 el('oldPin').value='wrong-pin';el('newPin').value=el('confirmPin').value='new-test-pin';
 el('change').requestSubmit();
@@ -132,7 +144,7 @@ if(!secondFile.endsWith('/Downloads/Проверка.kk'))throw Error('missing v
 el('rememberVault').checked=true;
 el('pin').value=el('repeat').value='separate-pin';el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length && el('vaultCatalog').inert,'second opened');
-if(el('rows').children.length)throw Error('vault isolation');
+if(el('rows').children.length || (await call('diskStatus')).enabled)throw Error('vault isolation');
 const choose=name=>{
   if(el('toggleCatalog').getAttribute('aria-expanded')==='false')el('toggleCatalog').click();
   Array.from(el('catalogRows').querySelectorAll('button')).find(b=>b.textContent===name).click();

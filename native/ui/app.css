@@ -109,3 +109,18 @@ dialog{max-height:85dvh}
 #recoveryList{display:grid;gap:.25rem}
 #recoveryList button{width:100%;text-align:left;overflow-wrap:anywhere}
 #recoveryMessage:empty{display:none}
+#macTools{display:flex;align-items:center;gap:3px;margin-left:auto;min-width:0}
+#macTools #search{width:min(14rem,22vw);min-width:4rem}
+.mac-vaults:has(#vault[hidden]) #macTools>*{display:none}
+#workspaceBar .tool-icon{display:grid;place-items:center;background:transparent;border:0;border-radius:5px;width:28px;height:28px;min-height:28px;padding:4px;font-size:18px}
+#workspaceBar .tool-icon:hover{background:var(--hover)}
+.tool-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+#folderMenu{position:fixed;inset:auto;margin:0;padding:3px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--ink)}
+#folderMenu button{border:0}
+#entries{position:relative}
+#entriesEmpty{position:absolute;top:50%;left:0;width:100%;text-align:center;color:var(--muted);font-size:.95rem}
+@media(min-width:661px){
+.mac-vaults #vault>header{display:none}
+.mac-vaults .panes:has(#editor[hidden]){grid-template-columns:minmax(10rem,21%) minmax(0,1fr)}
+.mac-vaults #detail:has(#editor[hidden]){display:none}
+}

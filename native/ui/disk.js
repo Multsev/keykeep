@@ -10,6 +10,17 @@ function clearDiskPreview(){
 async function renderDisk(){
   const state=await call('diskStatus');
   el('pendingUpload').hidden=!state.pendingUpload;
+  if(!window.KeyKeep){
+    el('legacyClientLabel').hidden=true;
+    el('diskEnableLabel').hidden=false;
+    el('diskEnabled').checked=state.enabled;
+    el('diskFolder').value=!state.shared && !state.enabled && state.folder==='KeyKeep' ? (selectedVault?.name || state.folder) : state.folder;
+    el('diskFolderLabel').hidden=!state.enabled;
+    el('diskActions').hidden=!state.connected;
+    el('diskConnect').hidden=el('diskDisconnect').hidden=true;
+    if(state.enabled && !state.connected)el('diskMessage').textContent='Подключите аккаунт в общих настройках и сохраните выбор хранилища.';
+    return;
+  }
   el('diskClient').value=state.client;
   el('diskFolder').value=state.folder;
   el('diskActions').hidden=el('diskDisconnect').hidden=!state.connected;
@@ -44,7 +55,7 @@ async function retryUpload(){
 }
 async function retryOnUnlock(){
   const state=await call('diskStatus');
-  if(!state.pendingUpload || diskBusy || state.busy)return;
+  if(!state.connected || !state.pendingUpload || diskBusy || state.busy)return;
   await diskTask(async()=>{
     try {await retryUpload();}
     catch(e){el('message').textContent='Отправка на Диск отложена. '+e.message;}
@@ -52,7 +63,23 @@ async function retryOnUnlock(){
 }
 document.addEventListener('DOMContentLoaded',()=>{
   const act=(id,fn)=>on(id,'click',()=>diskTask(fn));
-  const configure=async()=>{await call('diskConfigure',{client:el('diskClient').value,folder:el('diskFolder').value});clearDiskPreview();await renderDisk();};
+  const configure=async()=>{
+    const folder=el('diskFolder').value;
+    if(window.KeyKeep)await call('diskConfigure',{client:el('diskClient').value,folder});
+    else {
+      const previous=await call('diskStatus');
+      const account=await call('accountStatus');
+      if(previous.connected && !previous.shared && !account.connected && el('diskEnabled').checked){
+        await call('diskConfigure',{client:previous.client,folder});
+      }else await call('diskBind',{enabled:el('diskEnabled').checked,folder});
+    }
+    clearDiskPreview();await renderDisk();
+  };
+  el('diskEnabled').onchange=()=>{
+    el('diskFolderLabel').hidden=!el('diskEnabled').checked;
+    el('diskActions').hidden=true;clearDiskPreview();
+  };
+  if(!window.KeyKeep)el('diskFolder').addEventListener('input',()=>{el('diskActions').hidden=true;});
   act('diskRetry',retryUpload);
   act('diskCancelUpload',async()=>{await call('diskCancelUpload');await renderDisk();el('diskMessage').textContent='Отправка отменена';});
   act('diskSave',async()=>{await configure();el('diskMessage').textContent='Настройки сохранены';});
@@ -64,7 +91,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     el('diskMessage').textContent='Доступно папок: '+items.length;
   });
   act('diskInspect',async()=>{
-    await configure();
+    if(window.KeyKeep)await configure();
     el('diskMessage').textContent='Чтение сведений о версиях…';
     await call('diskInspect');const {remote,conflict}=await awaitDisk();
     await call('diskVersions');const {items}=await awaitDisk();
@@ -92,4 +119,33 @@ document.addEventListener('DOMContentLoaded',()=>{
       el('diskMessage').textContent=op==='diskUpload'?'Зашифрованная база загружена':op==='diskMerge'?'Версии объединены на устройстве и на Диске':'Локальная база восстановлена';
     });
   }
+});
+
+document.addEventListener('DOMContentLoaded',()=>{
+  if(window.KeyKeep)return;
+  const display=state=>{
+    el('accountClient').value=state.client;
+    el('accountClient').disabled=state.connected;
+    el('accountSave').hidden=el('accountConnect').hidden=state.connected;
+    el('accountDisconnect').hidden=!state.connected;
+    el('accountMessage').textContent=state.message || (state.connected?'Аккаунт подключён':'');
+    el('vaultPreferences').hidden=el('vault').hidden;
+  };
+  window.sharedDiskChanged=async()=>{
+    if(el('generalDialog').open)display(await call('accountStatus'));
+    if(el('security').open && !el('vault').hidden)await renderDisk();
+  };
+  el('generalSettings').onclick=async()=>{
+    if(document.querySelector('dialog[open]'))return;
+    el('generalDialog').showModal();
+    try{display(await call('accountStatus'));}catch(error){el('accountMessage').textContent=error.message;}
+  };
+  for(const id of ['accountSave','accountConnect','accountDisconnect']){
+    el(id).onclick=async()=>{
+      if(diskBusy){el('accountMessage').textContent='Дождитесь завершения обмена';return;}
+      try{display(await call(id,{client:el('accountClient').value}));}catch(error){el('accountMessage').textContent=error.message;}
+    };
+  }
+  el('generalClose').onclick=()=>el('generalDialog').close();
+  el('vaultPreferences').onclick=()=>{el('generalDialog').close();el('settings').click();};
 });

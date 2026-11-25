@@ -29,6 +29,7 @@ pub struct Account {
     pub client: String,
     pub folder: String,
     pub token: String,
+    pub(crate) shared_binding: Option<String>,
     pending: Option<Pending>,
     pub(crate) upload: Option<PendingUpload>,
     pub(crate) synced: Option<SyncVersion>,
@@ -58,6 +59,7 @@ impl Default for Account {
             client: option_env!("YANDEX_OAUTH_CLIENT_ID").unwrap_or("").into(),
             folder: "KeyKeep".into(),
             token: String::new(),
+            shared_binding: None,
             pending: None,
             upload: None,
             synced: None,
@@ -181,18 +183,7 @@ impl Job {
         let cancelled = Arc::new(AtomicBool::new(false));
         let flag = cancelled.clone();
         std::thread::spawn(move || {
-            let api_root = String::from("https://cloud-api.yandex.net/v1/disk/resources");
-            #[cfg(test)]
-            let api_root = account.mock_api.clone().unwrap_or(api_root);
-            let client = Client {
-                account,
-                api_root,
-                cancelled: flag,
-                http: ureq::AgentBuilder::new()
-                    .redirects(0)
-                    .timeout(Duration::from_secs(45))
-                    .build(),
-            };
+            let client = Client::new(account, flag);
             let _ = tx.send(action(client));
         });
         Self { rx, cancelled }
@@ -215,6 +206,21 @@ fn payload(r: ureq::Response) -> Result<Value> {
     serde_json::from_reader(r.into_reader().take(4 << 20)).map_err(|_| SERVICE)
 }
 impl Client {
+    fn new(account: Account, flag: Arc<AtomicBool>) -> Self {
+        let api_root = String::from("https://cloud-api.yandex.net/v1/disk/resources");
+        #[cfg(test)]
+        let api_root = account.mock_api.clone().unwrap_or(api_root);
+        Self {
+            account,
+            api_root,
+            cancelled: flag,
+            http: ureq::AgentBuilder::new()
+                .redirects(0)
+                .timeout(Duration::from_secs(45))
+                .build(),
+        }
+    }
+
     fn active(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Acquire) {
             Err("Операция отменена")
@@ -483,3 +489,26 @@ impl Client {
 
 #[cfg(test)]
 mod tests;
+
+/// Native-only account exchange. The platform stores the returned account in its credential store.
+pub(crate) fn shared_oauth(request: Value) -> Result<Value> {
+    let mut account: Account =
+        serde_json::from_value(request["account"].clone()).map_err(|_| SERVICE)?;
+    match request["op"].as_str() {
+        Some("authorize") => {
+            let url = account.authorize()?;
+            Ok(json!({"account":account,"url":url}))
+        }
+        Some("callback") => {
+            let (code, verifier) =
+                account.callback(request["callback"].as_str().ok_or(SERVICE)?)?;
+            let client = Client::new(account.clone(), Arc::new(AtomicBool::new(false)));
+            let Outcome::Token(token) = client.exchange(code, verifier)? else {
+                return Err(SERVICE);
+            };
+            account.token = token.to_string();
+            Ok(json!({"account":account}))
+        }
+        _ => Err(SERVICE),
+    }
+}

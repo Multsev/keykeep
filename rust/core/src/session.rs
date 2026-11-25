@@ -597,9 +597,17 @@ impl Session {
         use sha2::{Digest, Sha256};
         let arg = |k: &str| r[k].as_str().ok_or("Некорректный запрос");
         let (pin, v) = self.unlocked.as_ref().ok_or("Хранилище заблокировано")?;
+        // Shared credentials live in the native credential store and only enter the network job.
+        let mut account = v.disk.clone();
+        if let Some(binding) = &v.disk.shared_binding {
+            account.token.clear();
+            if !binding.is_empty() && Some(binding.as_str()) == r["accountBinding"].as_str() {
+                account.token = r["accountToken"].as_str().unwrap_or("").to_owned();
+            }
+        }
         if op == "diskStatus" {
             return Ok(
-                json!({"client":v.disk.client,"folder":v.disk.folder,"connected":!v.disk.token.is_empty(),"busy":self.cloud_job.is_some(),"pendingUpload":v.disk.upload.is_some(),"localModified":fs::metadata(&self.path).and_then(|m|m.modified()).ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_secs())}),
+                json!({"client":v.disk.client,"folder":v.disk.folder,"enabled":v.disk.shared_binding.as_ref().map_or(!v.disk.token.is_empty(), |id|!id.is_empty()),"shared":v.disk.shared_binding.is_some(),"connected":!account.token.is_empty(),"busy":self.cloud_job.is_some(),"pendingUpload":v.disk.upload.is_some(),"localModified":fs::metadata(&self.path).and_then(|m|m.modified()).ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_secs())}),
             );
         }
         if op == "diskPoll" {
@@ -684,10 +692,33 @@ impl Session {
             return Err("Дождитесь завершения текущей операции");
         }
         match op {
-            "diskConfigure" | "diskAuthorize" | "diskDisconnect" | "diskCallback"
+            "diskBind" | "diskConfigure" | "diskAuthorize" | "diskDisconnect" | "diskCallback"
             | "diskCancelUpload" => {
                 let mut next = v.clone();
                 let value = match op {
+                    "diskBind" => {
+                        let enabled = r["enabled"]
+                            .as_bool()
+                            .ok_or("Выберите режим синхронизации")?;
+                        let binding = if enabled { arg("accountBinding")? } else { "" };
+                        if enabled && binding.is_empty() {
+                            return Err("Сначала настройте подключение в общих настройках");
+                        }
+                        let folder = if enabled {
+                            arg("folder")?.trim()
+                        } else {
+                            &v.disk.folder
+                        };
+                        if v.disk.shared_binding.as_deref() == Some(binding)
+                            && folder == v.disk.folder
+                        {
+                            return Ok(Value::Null);
+                        }
+                        next.disk.disconnect();
+                        next.disk.configure("", folder)?;
+                        next.disk.shared_binding = Some(binding.into());
+                        Value::Null
+                    }
                     "diskConfigure" => {
                         let client = arg("client")?.trim();
                         let folder = arg("folder")?.trim();
@@ -726,10 +757,9 @@ impl Session {
             }
             _ => {}
         }
-        if v.disk.token.is_empty() {
+        if account.token.is_empty() {
             return Err("Сначала подключите Яндекс Диск");
         }
-        let account = v.disk.clone();
         let job = match op {
             "diskRetryUpload" => {
                 let pending = v.disk.upload.as_ref().ok_or("Нет отложенной отправки")?;
