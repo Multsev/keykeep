@@ -114,14 +114,25 @@ impl Vault {
         };
         let entries: Vec<Entry> = serde_json::from_str(entries.unwrap_or("[]"))
             .map_err(|_| "Не удалось прочитать записи")?;
-        let parents: HashMap<_, _> = folders
+        let vault = Self {
+            mcp_token: String::new(),
+            folders,
+            entries,
+            disk: Default::default(),
+        };
+        vault.validate()?;
+        Ok(vault)
+    }
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        let parents: HashMap<_, _> = self
+            .folders
             .iter()
             .map(|f| (f.id.as_str(), f.parent_id.as_str()))
             .collect();
-        if parents.len() != folders.len() || parents.get("root") != Some(&"root") {
+        if parents.len() != self.folders.len() || parents.get("root") != Some(&"root") {
             return Err("Повреждён список папок");
         }
-        for folder in &folders {
+        for folder in &self.folders {
             let mut path = HashSet::new();
             let mut current = folder.id.as_str();
             while current != "root" {
@@ -134,16 +145,11 @@ impl Vault {
             }
         }
         let mut ids = HashSet::new();
-        for entry in &entries {
+        for entry in &self.entries {
             if !ids.insert(&entry.id) || !parents.contains_key(entry.values.folder_id.as_str()) {
                 return Err("Повреждена привязка записи");
             }
         }
-        Ok(Self {
-            mcp_token: String::new(),
-            folders,
-            entries,
-            disk: Default::default(),
-        })
+        Ok(())
     }
 }

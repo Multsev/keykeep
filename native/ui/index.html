@@ -43,7 +43,7 @@
 <label>Облачная версия<select id="diskVersion"><option value="">Текущая база</option></select></label>
 <label>Пароль базы KeePass<input type="password" autocomplete="off" id="diskPassword"></label>
 <label class="check"><input type="checkbox" id="diskConfirm"> Подтверждаю замену выбранной версии</label>
-<div class="field-actions"><button id="diskUpload">На Диск</button><button id="diskRestore">Восстановить на устройстве</button></div></div>
+<div class="field-actions"><div id="pendingUpload" hidden><p>Ожидает отправки ранее подтверждённая копия базы.</p><button id="diskRetry">Повторить отправку</button> <button id="diskCancelUpload">Отменить отправку</button></div><button id="diskUpload">На Диск</button><button id="diskMerge">Объединить</button><button id="diskRestore">Восстановить на устройстве</button></div></div>
 <output id="diskMessage" role="status"></output></div></details><details id="mcpSettings"><summary>Доступ через MCP</summary><div class="exchange-body">
 <output id="mcpState"></output><button id="mcpToggle">Включить MCP</button>
 <div id="mcpControls" hidden><label class="check"><input type="checkbox" id="mcpWrite"> Разрешить запросы на запись</label>

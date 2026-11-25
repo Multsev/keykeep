@@ -149,7 +149,7 @@ on('access','submit',async()=>{
     if(!exists)await call('clearExchange');
   }
   el('access').reset();
-  el('gate').hidden=true;el('vault').hidden=false;screen('folders');await refresh();await window.keykeepOAuthReady();
+  el('gate').hidden=true;el('vault').hidden=false;screen('folders');await refresh();await window.keykeepOAuthReady();await retryOnUnlock();
 });
 let bioState = {}, hideTimer;
 async function biometricStatus() {
@@ -205,7 +205,7 @@ on('bioUnlock','click',async()=>{
   try{await call('bioUnlock');}
   catch(error){el('pin').focus();throw error;}
   finally{el('bioUnlock').disabled=false;}
-  el('access').reset();el('gate').hidden=true;el('vault').hidden=false;screen('folders');await refresh();await window.keykeepOAuthReady();
+  el('access').reset();el('gate').hidden=true;el('vault').hidden=false;screen('folders');await refresh();await window.keykeepOAuthReady();await retryOnUnlock();
 });
 on('newFolder','submit',async()=>{folder=await call('addFolder',{name:el('folderName').value,parent:folder});el('newFolder').reset();screen('entries');await refresh();});
 on('add','click',()=>edit());

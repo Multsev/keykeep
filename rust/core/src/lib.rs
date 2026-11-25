@@ -5,6 +5,7 @@ pub mod credentials;
 pub mod kdbx;
 pub mod legacy;
 mod mcp;
+mod merge;
 mod session;
 pub mod storage;
 mod yandex;

@@ -222,3 +222,131 @@ fn valid_restore_keeps_local_copy_and_excludes_oauth_from_kdbx() {
         vault.disk.token
     );
 }
+
+#[test]
+fn merge_preserves_local_remote_histories_and_is_repeatable() {
+    let mock = Mock::new();
+    let path = mock.client().path();
+    let local=crate::legacy::Vault::from_android(
+        Some(r#"[{"id":"root","name":"Все записи"},{"id":"old-folder","name":"Работа"}]"#),
+        Some(r#"[{"id":"old-id","folderId":"old-folder","title":"Example","username":"demo","password":"local-test","updatedAt":"2026-01-01T10:00:00Z","history":[{"changedAt":"2025-01-01","password":"earlier-local"}]}]"#)).unwrap();
+    let mut remote = local.clone();
+    remote.entries[0].values.password = "cloud-test".into();
+    remote.entries[0].updated_at = "2026-01-02T06:00:00-03:00".into();
+    remote.entries[0].history[0].password = Some("earlier-remote".into());
+    let mut extra = remote.entries[0].clone();
+    extra.id = "other-id".into();
+    remote.entries.push(extra);
+    let password = Zeroizing::new("fixture".to_string());
+    let previous = crate::kdbx::export(&remote, &password, None).unwrap();
+    mock.files
+        .lock()
+        .unwrap()
+        .data
+        .insert(path.clone(), previous.clone());
+    let mut merged = local;
+    for _ in 0..2 {
+        let expected = mock.client().info(&path).unwrap();
+        let Outcome::Merged(next, _) = mock
+            .client()
+            .merge(merged, password.clone(), expected)
+            .unwrap()
+        else {
+            panic!("missing merge")
+        };
+        assert_eq!(next.entries.len(), 2);
+        let e = next.entries.iter().find(|e| e.id == "old-id").unwrap();
+        assert_eq!(e.values.folder_id, "old-folder");
+        assert_eq!(e.values.password, "cloud-test");
+        assert_eq!(e.history.len(), 3);
+        assert!(
+            e.history
+                .iter()
+                .any(|h| h.values.as_deref().unwrap_or("").contains("local-test"))
+        );
+        let uploaded = mock.files.lock().unwrap().data[&path].clone();
+        let db = crate::kdbx::import(&uploaded, &password, None).unwrap();
+        assert_eq!(db.entries.len(), 2);
+        assert!(db.entries.iter().any(|e| e.history.len() == 3));
+        merged = *next;
+    }
+    assert!(
+        mock.files
+            .lock()
+            .unwrap()
+            .data
+            .iter()
+            .any(|(k, v)| k.contains("cloud-before-upload") && *v == previous)
+    );
+}
+
+#[test]
+fn queued_upload_survives_restart_and_obeys_original_confirmation() {
+    use crate::session::Session;
+    fn wait(session: &mut Session) -> Result<Value> {
+        for _ in 0..200 {
+            let result = session.call(json!({"op":"diskPoll"}))?;
+            if result["pending"] == false {
+                return Ok(result["result"].clone());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err("test job timeout")
+    }
+    let mock = Mock::new();
+    let path = mock.client().path();
+    let tmp = tempfile::tempdir().unwrap();
+    let vault = tmp.path().join("vault.kk");
+    let queued = vault.with_extension("pending-upload.kdbx");
+    let api = format!("{}/resources", mock.root);
+    let mut session = Session::new(vault.clone(), [3; 32]).unwrap();
+    session
+        .call(json!({"op":"create","pin":"test-pin"}))
+        .unwrap();
+    let disk = &mut session.unlocked.as_mut().unwrap().1.disk;
+    disk.token = "test-token".into();
+    disk.mock_api = Some(api.clone());
+    mock.files.lock().unwrap().fail_snapshot = true;
+    session
+        .call(json!({"op":"diskUpload","expected":null,"confirmed":true,"password":"fixture"}))
+        .unwrap();
+    assert!(wait(&mut session).is_err());
+    let saved = std::fs::read(&queued).unwrap();
+    drop(session);
+    let mut session = Session::new(vault, [3; 32]).unwrap();
+    session
+        .call(json!({"op":"unlock","pin":"test-pin"}))
+        .unwrap();
+    session.unlocked.as_mut().unwrap().1.disk.mock_api = Some(api);
+    assert_eq!(
+        session.call(json!({"op":"diskStatus"})).unwrap()["pendingUpload"],
+        true
+    );
+    {
+        let mut f = mock.files.lock().unwrap();
+        f.fail_snapshot = false;
+        f.data.insert(path.clone(), b"changed remotely".to_vec());
+    }
+    session.call(json!({"op":"diskRetryUpload"})).unwrap();
+    assert!(wait(&mut session).is_err());
+    assert_eq!(mock.files.lock().unwrap().data[&path], b"changed remotely");
+    mock.files.lock().unwrap().data.remove(&path);
+    session.call(json!({"op":"diskRetryUpload"})).unwrap();
+    assert_eq!(wait(&mut session).unwrap()["uploaded"], true);
+    assert_eq!(mock.files.lock().unwrap().data[&path], saved);
+    assert!(!queued.exists());
+    session
+        .call(json!({"op":"addFolder","name":"Changed locally","parent":"root"}))
+        .unwrap();
+    mock.files
+        .lock()
+        .unwrap()
+        .data
+        .insert(path.clone(), b"changed remotely".to_vec());
+    session.call(json!({"op":"diskInspect"})).unwrap();
+    assert_eq!(wait(&mut session).unwrap()["conflict"], true);
+    assert_eq!(
+        session.call(json!({"op":"diskStatus"})).unwrap()["pendingUpload"],
+        false
+    );
+}

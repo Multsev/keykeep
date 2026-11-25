@@ -131,7 +131,12 @@ impl Session {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err("Не удалось завершить удаление"),
         };
-        for ext in ["before-import.kk", "before-restore.kk", "attempts"] {
+        for ext in [
+            "before-import.kk",
+            "before-restore.kk",
+            "pending-upload.kdbx",
+            "attempts",
+        ] {
             remove(&self.path.with_extension(ext))?;
         }
         remove(&self.path)?;
@@ -325,8 +330,12 @@ impl Session {
                 if r["confirmed"] != true {
                     return Err("Подтвердите замену данных");
                 }
+                if self.cloud_job.is_some() {
+                    return Err("Дождитесь завершения синхронизации");
+                }
                 let mut next = Self::read_database(&r, password, keyfile)?;
                 next.disk = v.disk.clone();
+                next.disk.upload = None;
                 next.mcp_token.clone_from(&v.mcp_token);
                 self.mcp = None;
                 let backup =
@@ -336,6 +345,7 @@ impl Session {
                 self.write(&next, pin)?;
                 self.deleted_entry = None;
                 self.unlocked.as_mut().unwrap().1 = next;
+                let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
                 Ok(Value::Null)
             }
             "verifyPin" | "changePin" => {
@@ -534,6 +544,13 @@ impl Session {
             _ => Err("Неизвестная операция"),
         }
     }
+    fn content_digest(v: &Vault) -> Result<String, &'static str> {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        serde_json::to_writer(&mut hash, &(&v.folders, &v.entries))
+            .map_err(|_| "Ошибка сравнения версий")?;
+        Ok(format!("{:x}", hash.finalize()))
+    }
     fn disk_operation(&mut self, op: &str, r: &Value) -> Result<Value, &'static str> {
         use crate::yandex::{Client, Job, Outcome};
         use sha2::{Digest, Sha256};
@@ -541,7 +558,7 @@ impl Session {
         let (pin, v) = self.unlocked.as_ref().ok_or("Хранилище заблокировано")?;
         if op == "diskStatus" {
             return Ok(
-                json!({"client":v.disk.client,"folder":v.disk.folder,"connected":!v.disk.token.is_empty(),"busy":self.cloud_job.is_some(),"localModified":fs::metadata(&self.path).and_then(|m|m.modified()).ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_secs())}),
+                json!({"client":v.disk.client,"folder":v.disk.folder,"connected":!v.disk.token.is_empty(),"busy":self.cloud_job.is_some(),"pendingUpload":v.disk.upload.is_some(),"localModified":fs::metadata(&self.path).and_then(|m|m.modified()).ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_secs())}),
             );
         }
         if op == "diskPoll" {
@@ -553,7 +570,30 @@ impl Session {
             self.cloud_job = None;
             let expected = self.restore_revision.take();
             let value = match result?.ok_or("Нет результата")? {
-                Outcome::Info(value) => value,
+                Outcome::Info(mut value) => {
+                    if let (Some(remote), Some(synced)) =
+                        (value.get("remote"), v.disk.synced.as_ref())
+                    {
+                        value["conflict"] = json!(
+                            remote["sha256"].as_str() != Some(&synced.remote)
+                                && Self::content_digest(v)? != synced.local
+                        );
+                    }
+                    if value["uploaded"] == true
+                        && let Some(upload) = &v.disk.upload
+                    {
+                        let mut next = v.clone();
+                        next.disk.synced = Some(crate::yandex::SyncVersion {
+                            local: upload.local.clone(),
+                            remote: upload.sha256.clone(),
+                        });
+                        next.disk.upload = None;
+                        self.write(&next, pin)?;
+                        self.unlocked.as_mut().unwrap().1 = next;
+                        let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
+                    }
+                    value
+                }
                 Outcome::Token(token) => {
                     let mut next = v.clone();
                     next.disk.token = token.to_string();
@@ -561,13 +601,27 @@ impl Session {
                     self.unlocked.as_mut().unwrap().1 = next;
                     json!({"connected":true})
                 }
-                Outcome::Restore(data, password) => {
+                outcome @ (Outcome::Restore(..) | Outcome::Merged(..)) => {
                     let current = fs::read(&self.path).map_err(|_| "Ошибка чтения")?;
                     if expected != Some(Sha256::digest(&current).to_vec()) {
-                        return Err("Локальное хранилище изменилось. Повторите восстановление.");
+                        return Err(
+                            "Локальная база изменилась во время обмена и сохранена. Снова проверьте версии.",
+                        );
                     }
-                    let mut next = crate::kdbx::import(&data, &password, None)?;
+                    let (mut next, remote_digest) = match outcome {
+                        Outcome::Restore(data, password) => (
+                            crate::kdbx::import(&data, &password, None)?,
+                            format!("{:x}", Sha256::digest(&data)),
+                        ),
+                        Outcome::Merged(vault, digest) => (*vault, digest),
+                        _ => unreachable!(),
+                    };
                     next.disk = v.disk.clone();
+                    next.disk.synced = Some(crate::yandex::SyncVersion {
+                        remote: remote_digest,
+                        local: Self::content_digest(&next)?,
+                    });
+                    next.disk.upload = None;
                     next.mcp_token.clone_from(&v.mcp_token);
                     self.mcp = None;
                     storage::persist(&self.path.with_extension("before-restore.kk"), &current)
@@ -575,6 +629,7 @@ impl Session {
                     self.write(&next, pin)?;
                     self.deleted_entry = None;
                     self.unlocked.as_mut().unwrap().1 = next;
+                    let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
                     json!({"restored":true})
                 }
             };
@@ -584,7 +639,8 @@ impl Session {
             return Err("Дождитесь завершения текущей операции");
         }
         match op {
-            "diskConfigure" | "diskAuthorize" | "diskDisconnect" | "diskCallback" => {
+            "diskConfigure" | "diskAuthorize" | "diskDisconnect" | "diskCallback"
+            | "diskCancelUpload" => {
                 let mut next = v.clone();
                 let value = match op {
                     "diskConfigure" => {
@@ -597,6 +653,10 @@ impl Session {
                         Value::Null
                     }
                     "diskAuthorize" => json!(next.disk.authorize()?),
+                    "diskCancelUpload" => {
+                        next.disk.upload = None;
+                        Value::Null
+                    }
                     "diskDisconnect" => {
                         next.disk.disconnect();
                         Value::Null
@@ -614,6 +674,9 @@ impl Session {
                 };
                 self.write(&next, pin)?;
                 self.unlocked.as_mut().unwrap().1 = next;
+                if self.unlocked.as_ref().unwrap().1.disk.upload.is_none() {
+                    let _ = fs::remove_file(self.path.with_extension("pending-upload.kdbx"));
+                }
                 return Ok(value);
             }
             _ => {}
@@ -623,29 +686,60 @@ impl Session {
         }
         let account = v.disk.clone();
         let job = match op {
+            "diskRetryUpload" => {
+                let pending = v.disk.upload.as_ref().ok_or("Нет отложенной отправки")?;
+                let bytes = fs::read(self.path.with_extension("pending-upload.kdbx"))
+                    .map_err(|_| "Нет файла отложенной отправки. Проверьте версии.")?;
+                if format!("{:x}", Sha256::digest(&bytes)) != pending.sha256 {
+                    return Err("Копия для отправки изменилась. Проверьте версии.");
+                }
+                let expected = pending.expected.clone();
+                Job::start(move |c| c.upload(bytes, expected), account)
+            }
             "diskInspect" => Job::start(Client::inspect, account),
             "diskFolders" | "diskVersions" => {
                 let versions = op == "diskVersions";
                 Job::start(move |c| c.list(versions), account)
             }
-            "diskUpload" | "diskRestore" => {
+            "diskUpload" | "diskRestore" | "diskMerge" => {
                 if r["confirmed"] != true || r.get("expected").is_none() {
                     return Err("Подтвердите операцию после проверки облачной версии");
                 }
                 let password = Zeroizing::new(arg("password")?.to_owned());
-                let bytes = crate::kdbx::export(v, &password, None)?;
                 let expected = r["expected"].clone();
                 if op == "diskUpload" {
+                    let bytes = crate::kdbx::export(v, &password, None)?;
+                    let mut next = v.clone();
+                    next.disk.upload = Some(crate::yandex::PendingUpload {
+                        local: Self::content_digest(v)?,
+                        expected: expected.clone(),
+                        sha256: format!("{:x}", Sha256::digest(&bytes)),
+                    });
+                    storage::persist(&self.path.with_extension("pending-upload.kdbx"), &bytes)
+                        .map_err(|_| "Не удалось сохранить файл для повторной отправки")?;
+                    self.write(&next, pin)?;
+                    self.unlocked.as_mut().unwrap().1 = next;
                     Job::start(move |c| c.upload(bytes, expected), account)
                 } else {
                     self.restore_revision = Some(
                         Sha256::digest(fs::read(&self.path).map_err(|_| "Ошибка чтения")?).to_vec(),
                     );
                     let version = r["version"].as_str().unwrap_or_default().to_owned();
-                    Job::start(
-                        move |c| c.restore(bytes, password, version, expected),
-                        account,
-                    )
+                    if op == "diskMerge" {
+                        if !version.is_empty() || expected.is_null() {
+                            return Err("Для объединения выберите текущую облачную базу");
+                        }
+                        let mut local = v.clone();
+                        local.disk = Default::default();
+                        local.mcp_token.clear();
+                        Job::start(move |c| c.merge(local, password, expected), account)
+                    } else {
+                        let bytes = crate::kdbx::export(v, &password, None)?;
+                        Job::start(
+                            move |c| c.restore(bytes, password, version, expected),
+                            account,
+                        )
+                    }
                 }
             }
             _ => return Err("Неизвестная операция Диска"),

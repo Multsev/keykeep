@@ -9,6 +9,7 @@ function clearDiskPreview(){
 }
 async function renderDisk(){
   const state=await call('diskStatus');
+  el('pendingUpload').hidden=!state.pendingUpload;
   el('diskClient').value=state.client;
   el('diskFolder').value=state.folder;
   el('diskActions').hidden=el('diskDisconnect').hidden=!state.connected;
@@ -36,9 +37,24 @@ window.keykeepOAuthReady=async()=>{
     el('settingsMessage').textContent=el('message').textContent='Яндекс Диск подключён';
   });
 };
+async function retryUpload(){
+  await call('diskRetryUpload');await awaitDisk();
+  await renderDisk();clearDiskPreview();
+  el('diskMessage').textContent='Отложенная копия отправлена';
+}
+async function retryOnUnlock(){
+  const state=await call('diskStatus');
+  if(!state.pendingUpload || diskBusy || state.busy)return;
+  await diskTask(async()=>{
+    try {await retryUpload();}
+    catch(e){el('message').textContent='Отправка на Диск отложена. '+e.message;}
+  });
+}
 document.addEventListener('DOMContentLoaded',()=>{
   const act=(id,fn)=>on(id,'click',()=>diskTask(fn));
   const configure=async()=>{await call('diskConfigure',{client:el('diskClient').value,folder:el('diskFolder').value});clearDiskPreview();await renderDisk();};
+  act('diskRetry',retryUpload);
+  act('diskCancelUpload',async()=>{await call('diskCancelUpload');await renderDisk();el('diskMessage').textContent='Отправка отменена';});
   act('diskSave',async()=>{await configure();el('diskMessage').textContent='Настройки сохранены';});
   act('diskConnect',async()=>{await configure();await call('diskConnect');});
   act('diskDisconnect',async()=>{await call('diskDisconnect');clearDiskPreview();await renderDisk();});
@@ -50,29 +66,30 @@ document.addEventListener('DOMContentLoaded',()=>{
   act('diskInspect',async()=>{
     await configure();
     el('diskMessage').textContent='Чтение сведений о версиях…';
-    await call('diskInspect');const {remote}=await awaitDisk();
+    await call('diskInspect');const {remote,conflict}=await awaitDisk();
     await call('diskVersions');const {items}=await awaitDisk();
     items.sort((a,b)=>String(b.modified).localeCompare(String(a.modified)));
     const local=(await call('diskStatus')).localModified;
     el('diskRemote').textContent='Локальная база: '+new Date(local*1000).toLocaleString('ru-RU')+'. '+(remote?'Облачная база: '+new Date(remote.modified).toLocaleString('ru-RU')+', '+remote.size+' Б.':'Облачной базы ещё нет.');
     setChildren(el('diskVersion'), new Option('Текущая база',''),...items.map(i=>new Option(i.name,i.name)));
-    diskExpected=remote;el('diskMessage').textContent='';
+    diskExpected=remote;el('diskMessage').textContent=conflict?'После синхронизации изменились обе версии. Выберите объединение или укажите, какую базу сохранить.':'';
   });
   for(const id of ['diskClient','diskFolder'])el(id).addEventListener('input',clearDiskPreview);
-  for(const op of ['diskUpload','diskRestore']){
+  for(const op of ['diskUpload','diskRestore','diskMerge']){
     act(op,async()=>{
       if(diskExpected===undefined)throw Error('Сначала проверьте версии');
       if(!el('diskConfirm').checked)throw Error('Подтвердите замену данных');
       if(!el('diskPassword').value)throw Error('Введите пароль базы KeePass');
-      if(op==='diskUpload' && el('diskVersion').value)throw Error('Для загрузки выберите текущую базу');
+      if(op!=='diskRestore' && el('diskVersion').value)throw Error('Для загрузки выберите текущую базу');
       await call(op,{expected:diskExpected,confirmed:true,password:el('diskPassword').value,version:el('diskVersion').value});
       el('diskMessage').textContent='Идёт обмен с Яндекс Диском…';
-      await awaitDisk();clearDiskPreview();
-      if(op==='diskRestore'){
+      try {await awaitDisk();} finally {if(!el('vault').hidden)await renderDisk();}
+      clearDiskPreview();
+      if(op!=='diskUpload'){
         hideUndo();current=null;folder='root';el('editor').reset();clearEntryExtras();
         el('editor').hidden=true;el('search').value='';await refresh();
       }
-      el('diskMessage').textContent=op==='diskUpload'?'Зашифрованная база загружена':'Локальная база восстановлена';
+      el('diskMessage').textContent=op==='diskUpload'?'Зашифрованная база загружена':op==='diskMerge'?'Версии объединены на устройстве и на Диске':'Локальная база восстановлена';
     });
   }
 });

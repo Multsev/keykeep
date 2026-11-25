@@ -23,10 +23,26 @@ const STALE: &str = "Облачная версия изменилась. Обн�
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Account {
+    #[cfg(test)]
+    #[serde(skip)]
+    mock_api: Option<String>,
     pub client: String,
     pub folder: String,
     pub token: String,
     pending: Option<Pending>,
+    pub(crate) upload: Option<PendingUpload>,
+    pub(crate) synced: Option<SyncVersion>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct SyncVersion {
+    pub remote: String,
+    pub local: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct PendingUpload {
+    pub local: String,
+    pub expected: Value,
+    pub sha256: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Pending {
@@ -37,10 +53,14 @@ struct Pending {
 impl Default for Account {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
+            mock_api: None,
             client: option_env!("YANDEX_OAUTH_CLIENT_ID").unwrap_or("").into(),
             folder: "KeyKeep".into(),
             token: String::new(),
             pending: None,
+            upload: None,
+            synced: None,
         }
     }
 }
@@ -68,6 +88,10 @@ impl Account {
     pub fn configure(&mut self, client: &str, folder: &str) -> Result<()> {
         if !component(folder) {
             return Err("Укажите имя папки без пути");
+        }
+        if client.trim() != self.client || folder.trim() != self.folder {
+            self.upload = None;
+            self.synced = None;
         }
         if client != self.client {
             self.token.clear();
@@ -126,6 +150,8 @@ impl Account {
         Ok((code, self.pending.take().unwrap().verifier))
     }
     pub fn disconnect(&mut self) {
+        self.upload = None;
+        self.synced = None;
         self.token.clear();
         self.pending = None;
     }
@@ -135,6 +161,7 @@ pub enum Outcome {
     Info(Value),
     Token(Zeroizing<String>),
     Restore(Vec<u8>, Zeroizing<String>),
+    Merged(Box<crate::legacy::Vault>, String),
 }
 pub struct Job {
     rx: mpsc::Receiver<Result<Outcome>>,
@@ -154,9 +181,12 @@ impl Job {
         let cancelled = Arc::new(AtomicBool::new(false));
         let flag = cancelled.clone();
         std::thread::spawn(move || {
+            let api_root = String::from("https://cloud-api.yandex.net/v1/disk/resources");
+            #[cfg(test)]
+            let api_root = account.mock_api.clone().unwrap_or(api_root);
             let client = Client {
                 account,
-                api_root: "https://cloud-api.yandex.net/v1/disk/resources".into(),
+                api_root,
                 cancelled: flag,
                 http: ureq::AgentBuilder::new()
                     .redirects(0)
@@ -385,6 +415,9 @@ impl Client {
         self.prepare()?;
         let path = self.path();
         let info = self.info(&path)?;
+        if info["sha256"].as_str() == Some(format!("{:x}", Sha256::digest(&bytes)).as_str()) {
+            return Ok(Outcome::Info(json!({"uploaded":true})));
+        }
         if info != expected {
             return Err(STALE);
         }
@@ -401,6 +434,23 @@ impl Client {
         }
         self.put(&path, &bytes, !expected.is_null())?;
         Ok(Outcome::Info(json!({"uploaded":true})))
+    }
+    pub fn merge(
+        self,
+        local: crate::legacy::Vault,
+        password: Zeroizing<String>,
+        expected: Value,
+    ) -> Result<Outcome> {
+        let bytes = self.download(&self.path())?;
+        if Some(format!("{:x}", Sha256::digest(&bytes)).as_str()) != expected["sha256"].as_str() {
+            return Err(STALE);
+        }
+        let remote = crate::kdbx::import(&bytes, &password, None)?;
+        let merged = crate::merge::merge(&local, remote)?;
+        let export = crate::kdbx::export(&merged, &password, None)?;
+        let digest = format!("{:x}", Sha256::digest(&export));
+        self.upload(export, expected)?;
+        Ok(Outcome::Merged(Box::new(merged), digest))
     }
     pub fn restore(
         self,
