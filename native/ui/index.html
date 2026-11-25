@@ -12,7 +12,7 @@
   <div class="credential"><label for="username">Логин</label><div class="field-line"><input id="username" required><button type="button" id="copyUsername" aria-label="Скопировать логин">Копировать</button></div></div>
   <div class="credential"><label for="password">Пароль</label><div class="field-line"><input id="password" required type="password" autocomplete="off"><button type="button" id="copyPassword" aria-label="Скопировать пароль">Копировать</button></div></div>
   <div class="field-actions"><button id="revealPassword" type="button">Показать пароль</button><button id="generate" type="button">Сгенерировать</button></div>
-  <label>Сайт<input id="website"></label><label>Заметки<textarea id="note"></textarea></label>
+  <div><label for="website">Сайт</label><div class="field-line"><input id="website"><button type="button" id="openWebsite" hidden>Открыть сайт</button></div></div><label>Заметки<textarea id="note"></textarea></label>
   <details id="custom"><summary>Дополнительные поля</summary><div id="customList"></div>
     <button id="addField" type="button">Добавить поле</button>
   </details>
@@ -48,7 +48,7 @@
 <output id="mcpState"></output><button id="mcpToggle">Включить MCP</button>
 <div id="mcpControls" hidden><label class="check"><input type="checkbox" id="mcpWrite"> Разрешить запросы на запись</label>
 <div class="field-actions"><button id="mcpCopy">Копировать команду подключения</button><button id="mcpRotate">Сменить токен</button></div></div>
-</div></details><button id="eraseVault">Удалить локальное хранилище</button><output id="settingsMessage" role="status"></output></div></dialog><dialog id="eraseDialog" aria-labelledby="eraseTitle"><form id="eraseForm" class="settings-body">
+</div></details><details><summary>О приложении</summary><div class="settings-body"><p>KeyKeep · версия <span id="buildVersion">@KEYKEEP_VERSION@</span></p><p>Дата сборки (UTC): <time id="buildDate">@KEYKEEP_DATE@</time></p></div></details><button id="eraseVault">Удалить локальное хранилище</button><output id="settingsMessage" role="status"></output></div></dialog><dialog id="eraseDialog" aria-labelledby="eraseTitle"><form id="eraseForm" class="settings-body">
 <h2 id="eraseTitle">Удалить локальное хранилище?</h2>
 <p>С этого устройства будут удалены записи, локальные снимки, ключи и настройки входа и интеграций. Для восстановления записей понадобится отдельная копия KDBX.</p>
 <label>Текущий мастер-PIN<input type="password" id="erasePin" autocomplete="off" required></label>

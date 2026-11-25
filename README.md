@@ -8,6 +8,8 @@
 
 В ветке `rust-android-macos` обе платформы используют ядро из `rust/core` и интерфейс из `native/ui`. Оболочки в `native/macos` и `native/android` отвечают за окна, системные ключи, биометрию и выбор файлов. Прежний Android-клиент находится в `lib/`. Его возможности описаны ниже.
 
+Ход проверки по 72 сценариям исходного приложения приведён в [таблице приёмки](docs/Проверка-переноса.md).
+
 Для сборки на Apple Silicon нужны Rust, Xcode с командными инструментами и macOS 14 или новее. Для Android установите JDK 17, Android SDK Platform 35, Build Tools 35.0.0 и NDK 28.2.13676358. Android-скрипт использует локальный отладочный ключ `~/.android/debug.keystore`. Путь к SDK, NDK и JDK можно задать через `ANDROID_HOME`, `ANDROID_NDK_HOME` и `JAVA_HOME`.
 
 ```sh

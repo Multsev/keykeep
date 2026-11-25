@@ -204,6 +204,14 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             oauthCallback=nil
             let result=core(["op":"diskCallback","callback":raw]);reply(result["error"]==nil ? ["value":true] : result);return
         }
+        if op == "openWebsite" {
+            let state=core(["op":"status"])["value"] as? [String:Any]
+            guard state?["open"] as? Bool == true else {reply(["error":"Хранилище заблокировано"]);return}
+            guard let raw=args["url"] as? String, let url=URL(string:raw),
+                  ["https","http"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty,
+                  url.user==nil, url.password==nil else {reply(["error":"Некорректный адрес сайта"]);return}
+            reply(NSWorkspace.shared.open(url) ? ["value":NSNull()] : ["error":"Не удалось открыть браузер"]);return
+        }
         if op == "copyField" {
             guard let state = core(["op":"status"])["value"] as? [String:Any],
                   state["open"] as? Bool == true, let text = args["text"] as? String else {reply(["error":"Хранилище заблокировано"]);return}

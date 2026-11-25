@@ -139,6 +139,21 @@ public final class MigrationProbe extends Instrumentation {
         evaluate("el('pin').value=el('repeat').value='fresh-test';el('enter').click()");
         waitFor("!el('vault').hidden && el('tree').children.length===1 && !el('rows').children.length");
     }
+    private void openFixtureWebsite()throws Exception{
+        final CompletableFuture<String> destination=new CompletableFuture<>();
+        ActivityMonitor monitor=new ActivityMonitor(){
+            @Override public ActivityResult onStartActivity(Intent intent){
+                if(!Intent.ACTION_VIEW.equals(intent.getAction()))return null;
+                destination.complete(intent.getDataString());
+                return new ActivityResult(Activity.RESULT_CANCELED,null);
+            }
+        };
+        addMonitor(monitor);
+        try{
+            evaluate("el('website').value='';el('note').value='Документация: www.example.test/help';el('note').dispatchEvent(new Event('input'));el('openWebsite').click()");
+            if(!"https://www.example.test/help".equals(destination.get(10,TimeUnit.SECONDS)))throw new AssertionError("Incorrect website intent");
+        }finally{removeMonitor(monitor);}
+    }
     private void editorWithKeyboard()throws Exception{
         if(android.os.Build.VERSION.SDK_INT<30)return;
         final int[] originalZoom=new int[1];
@@ -261,6 +276,9 @@ public final class MigrationProbe extends Instrumentation {
             waitFor("el('rows').firstChild?.textContent.includes('MigrationFixture')===true");
             evaluate("el('rows').firstChild.click()");
             waitFor("el('password').value==='synthetic-only' && current.history.length===1 && current.customFields[0].type==='protected' && current.folderId==='old-folder'");
+            openFixtureWebsite();
+            evaluate("el('rows').firstChild.click()");
+            waitFor("el('note').value!=='Документация: www.example.test/help'");
             waitFor("el('customList').querySelectorAll('input')[1].type==='password'");
             evaluate("el('history').open=true;el('revisions').firstChild.open=true");
             waitFor("el('revisions').querySelector('button')!==null");

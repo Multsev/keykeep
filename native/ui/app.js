@@ -56,6 +56,7 @@ async function reset(promptOnOpen=false) {
   clearDiskPreview();
   ++listing;
   document.querySelectorAll('form').forEach(f => f.reset());
+  updateSiteButton();
   el('search').value = ''; el('message').textContent = '';
   setChildren(el('tree')); setChildren(el('rows')); current = null; folder = 'root';
   el('editor').hidden = true; el('vault').hidden = true; el('gate').hidden = false;
@@ -112,6 +113,7 @@ function edit(item={id:'',folderId:folder,customFields:[]}) {
   renderEntryExtras(item);
   el('entryFolder').value=item.folderId;
   current=item;for(const k of keys) el(k).value=item[k]||'';
+  updateSiteButton();
   el('editor').hidden=false; screen('detail');if (!item.id) el('title').focus();
 }
 function updateStartupAction(){
@@ -204,8 +206,16 @@ on('add','click',()=>edit());
 on('editor','submit',async()=>{
   const values={folderId:el('entryFolder').value,customFields:collectFields()};
   for(const key of keys)values[key]=el(key).value;
+  values.username=formatLogin(values.username);
+  values.website=formatWebsite(values.website);
+  values.title=values.title.trim();values.note=values.note.trim();
   const id=await call('save',{id:current.id,values,time:new Date().toISOString()});
   edit(await call('get',{id}));await refresh();
+});
+for(const id of ['website','note'])el(id).addEventListener('input',updateSiteButton);
+on('openWebsite','click',async()=>{
+  const url=entryWebsite();
+  if(url)await call('openWebsite',{url});
 });
 on('revealPassword','click',()=>{
   const reveal=el('password').type==='password';

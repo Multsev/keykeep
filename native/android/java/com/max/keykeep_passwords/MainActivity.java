@@ -152,6 +152,14 @@ public final class MainActivity extends Activity {
                 String raw=oauthCallback;oauthCallback=null;
                 JSONObject exchanged=core(op("diskCallback").put("callback",raw));
                 if(exchanged.has("error"))reply(id,exchanged);else value(id,true);return;
+            case "openWebsite":
+                if(!core(op("status")).getJSONObject("value").getBoolean("open")){error(id,"Хранилище заблокировано");return;}
+                android.net.Uri site=android.net.Uri.parse(args.getString("url"));
+                if(!("https".equals(site.getScheme()) || "http".equals(site.getScheme())) ||
+                    site.getHost()==null || site.getUserInfo()!=null){error(id,"Некорректный адрес сайта");return;}
+                try{startActivity(new Intent(Intent.ACTION_VIEW,site).addCategory(Intent.CATEGORY_BROWSABLE));value(id,JSONObject.NULL);}
+                catch(android.content.ActivityNotFoundException e){error(id,"Не удалось открыть браузер");}
+                return;
             case "copyField":
                 if(!core(op("status")).getJSONObject("value").getBoolean("open")){error(id,"Хранилище заблокировано");return;}
                 boolean secret=args.optBoolean("protected");

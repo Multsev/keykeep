@@ -6,6 +6,7 @@ const until = async (condition, step) => {
   }
   throw Error(step);
 };
+if(!/^\d+\.\d+\.\d+/.test(el('buildVersion').textContent) || !/^\d{4}-\d{2}-\d{2}$/.test(el('buildDate').textContent))throw Error('build metadata');
 if(startupImport){
   await until(()=>el('startupExchange').open && el('startupDbName').textContent,'selected database');
   el('pin').value=el('repeat').value='fixture-pin';
@@ -29,7 +30,13 @@ await until(()=>!el('vault').hidden && el('tree').children.length,'create');
 el('add').click();
 el('title').value='Тестовая запись';
 if(el('editor').checkValidity())throw Error('empty credentials accepted');
-el('username').value='demo';
+if(formatLogin('8 999 123 45 67')!=='+7 (999) 123-45-67' || formatLogin('admin')!=='admin')throw Error('contact login format');
+el('note').value='Документация: www.example.test/help';el('note').dispatchEvent(new Event('input'));
+if(el('openWebsite').hidden || entryWebsite()!=='https://www.example.test/help')throw Error('website from note');
+el('website').value='javascript:alert(1)';el('website').dispatchEvent(new Event('input'));
+if(!el('openWebsite').hidden)throw Error('unexpected website scheme');
+el('website').value='example.test/path';
+el('username').value=' USER@EXAMPLE.TEST ';
 if(el('editor').checkValidity())throw Error('empty password accepted');
 el('password').value='synthetic-only';
 el('addField').click();
@@ -49,6 +56,7 @@ await until(()=>!el('vault').hidden && el('rows').children.length,'unlock');
 el('search').value='тестовая';el('search').dispatchEvent(new Event('input'));
 el('rows').firstChild.click();
 await until(()=>el('password').value==='synthetic-only','reopen');
+if(el('username').value!=='user@example.test' || el('website').value!=='https://example.test/path')throw Error('persisted contact format');
 if(el('password').type!=='password') throw Error('visible password');
 if(collectFields()[0].type!=='oneTimePassword')throw Error('TOTP type lost');
 el('note').value='Изменение для истории';el('editor').requestSubmit();

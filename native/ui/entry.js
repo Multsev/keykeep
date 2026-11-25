@@ -10,6 +10,32 @@ function actionButton(title, run) {
   return button;
 }
 
+function formatLogin(source) {
+  const value=source.trim();
+  if(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))return value.toLowerCase();
+  if(!/^[+\d()\s-]+$/.test(value))return value;
+  const digits=value.replace(/\D/g,'');
+  const local=/^[78]\d{10}$/.test(digits)?digits.slice(1):digits;
+  return /^\d{10}$/.test(local)?'+7 ('+local.slice(0,3)+') '+local.slice(3,6)+'-'+local.slice(6,8)+'-'+local.slice(8):value;
+}
+function formatWebsite(source) {
+  const value=source.trim();
+  return /^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/?#][^\s]*)?$/i.test(value)?'https://'+value:value;
+}
+function entryWebsite() {
+  const noteLink=el('note').value.match(/(?:https?:\/\/|www\.)(?:[a-z0-9-]+\.)+[a-z]{2,}[^\s<]*/i);
+  const value=formatWebsite(el('website').value.trim() || (noteLink?noteLink[0]:''));
+  try {
+    const url=new URL(value);
+    return ['http:','https:'].includes(url.protocol) && !url.username && !url.password?url.href:'';
+  } catch {return '';}
+}
+function updateSiteButton() {
+  const address=entryWebsite();
+  el('openWebsite').hidden=!address;
+  el('openWebsite').title=address;
+}
+
 function clearEntryExtras() {
   for (const id of ['customList', 'revisions']) setChildren(el(id));
   el('custom').open = el('history').open = false;

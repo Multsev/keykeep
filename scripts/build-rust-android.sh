@@ -22,6 +22,8 @@ javac -encoding UTF-8 --release 8 -cp "$platform" -d "$stage/classes" native/and
 jar cf "$stage/classes.jar" -C "$stage/classes" .
 "$bt/d8" --min-api 28 --lib "$platform" --output "$stage" "$stage/classes.jar"
 cp native/ui/* "$stage/assets/ui/"
+version=0.1.0-dev
+sed -e "s/@KEYKEEP_VERSION@/$version/g" -e "s/@KEYKEEP_DATE@/$(date -u +%Y-%m-%d)/g" native/ui/index.html > "$stage/assets/ui/index.html"
 for directory in android/app/src/main/res/mipmap-*; do
     mkdir -p "$stage/resources/$(basename "$directory")"
     cp "$directory"/ic_launcher.* "$stage/resources/$(basename "$directory")/"
@@ -30,7 +32,7 @@ mkdir -p "$stage/resources/drawable" "$stage/resources/values"
 cp android/app/src/main/res/drawable/keykeep_mark.xml "$stage/resources/drawable/"
 cp android/app/src/main/res/values/keykeep_icon.xml "$stage/resources/values/"
 "$bt/aapt2" compile --dir "$stage/resources" -o "$stage/icons.zip"
-"$bt/aapt2" link "$stage/icons.zip" -I "$platform" --manifest native/android/AndroidManifest.xml -A "$stage/assets" --min-sdk-version 28 --target-sdk-version 35 --version-code "${KEYKEEP_VERSION_CODE:-26112501}" --version-name "0.1.0-dev" -o "$stage/app.apk"
+"$bt/aapt2" link "$stage/icons.zip" -I "$platform" --manifest native/android/AndroidManifest.xml -A "$stage/assets" --min-sdk-version 28 --target-sdk-version 35 --version-code "${KEYKEEP_VERSION_CODE:-26112501}" --version-name "$version" -o "$stage/app.apk"
 (cd "$stage" && zip -q app.apk classes.dex lib/arm64-v8a/libkeykeep.so)
 "$bt/zipalign" -f 4 "$stage/app.apk" "$stage/aligned.apk"
 "$bt/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --out "$stage/KeyKeep.apk" "$stage/aligned.apk"
