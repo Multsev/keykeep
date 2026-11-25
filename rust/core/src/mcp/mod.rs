@@ -61,9 +61,9 @@ fn tools() -> Value {
         fields.insert(key.into(), json!({"type":"string"}));
     }
     json!({"tools":[
-        {"name":"list_vault_structure","description":"List folders and entry metadata.","inputSchema":{"type":"object","properties":{}}},
-        {"name":"get_password_entry","description":"Read one entry after the owner approves.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
-        {"name":"upsert_password_entry","description":"Create or update one entry after the owner approves.","inputSchema":{"type":"object","properties":fields,"required":["title","username","password"]}}
+        {"name":"list_vault_structure","description":"Список папок и записей с логинами и датами изменения, без паролей.","inputSchema":{"type":"object","properties":{}}},
+        {"name":"get_password_entry","description":"Чтение выбранной записи, включая пароль, после вашего подтверждения.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
+        {"name":"upsert_password_entry","description":"Создание или изменение записи с вашим подтверждением. Требуется разрешить запросы на запись.","inputSchema":{"type":"object","properties":fields,"required":["title","username","password"]}}
     ]})
 }
 impl Server {
@@ -167,6 +167,9 @@ impl Session {
         Ok(&self.unlocked.as_ref().unwrap().1.mcp_token)
     }
     pub(crate) fn mcp_operation(&mut self, op: &str, r: &Value) -> Result<Value> {
+        if op == "mcpToolCatalog" {
+            return Ok(tools());
+        }
         let (pin, v) = self.unlocked.as_ref().ok_or("Хранилище заблокировано")?;
         match op {
             "mcpStatus" => Ok(

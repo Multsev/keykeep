@@ -1,5 +1,6 @@
 import Cocoa
 import Security
+import LocalAuthentication
 
 private struct DiskAccountError: LocalizedError {
     let message:String
@@ -15,11 +16,16 @@ final class DiskAccount {
     #endif
     private(set) var message=""
     private var exchanging=false
-    private func load() throws -> [String:Any] {
+    private func load(interactive:Bool=true) throws -> [String:Any] {
         #if UI_TEST
         guard let data=fixture else {return [:]}
         #else
         var lookup=query
+        if !interactive {
+            let context=LAContext()
+            context.interactionNotAllowed=true
+            lookup[kSecUseAuthenticationContext as String]=context
+        }
         lookup[kSecReturnData as String]=true
         var raw:CFTypeRef?
         let status=SecItemCopyMatching(lookup as CFDictionary,&raw)
@@ -49,7 +55,7 @@ final class DiskAccount {
         return (item["binding"] as? String ?? "", item["token"] as? String ?? "")
     }
     func status() throws -> [String:Any] {
-        let item=try load()
+        let item=try load(interactive:false)
         return ["client":item["client"] as? String ?? "", "connected":!(item["token"] as? String ?? "").isEmpty,"message":message]
     }
     private static func oauth(_ request:[String:Any]) throws -> [String:Any] {

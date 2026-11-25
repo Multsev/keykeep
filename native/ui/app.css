@@ -125,7 +125,19 @@ dialog{max-height:85dvh}
 .mac-vaults #detail:has(#editor[hidden]){display:none}
 }
 
-#generalDialog{width:min(39rem,94vw)}
+#generalDialog{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;border:0;border-radius:0;box-sizing:border-box;background:Canvas;color:var(--ink);padding:0}
+#generalDialog[open]{display:flex;flex-direction:column}
+#generalDialog>header{flex:none;background:var(--control)}
+#generalDialog .preferences-layout{flex:1;min-height:0;grid-template-columns:clamp(8rem,21vw,15rem) minmax(0,1fr)}
+#generalDialog .settings-body{overflow:auto;grid-auto-rows:max-content;padding:1rem clamp(.75rem,2vw,2rem)}
+#generalDialog .settings-body>*{max-width:48rem}
+.mcp-section summary{cursor:pointer;font-weight:600;padding:.4rem 0}
+.mcp-section .mcp-facts{margin:.4rem 0}
+#toolCount,.tool-params{color:var(--muted);font-size:.9em}
+#toolList article{padding:.6rem 0;border-top:1px solid var(--line)}
+#toolList code{overflow-wrap:anywhere}
+#toolList p{margin:.3rem 0 0}
+
 .preferences-layout{display:grid;grid-template-columns:minmax(7.5rem,30%) minmax(0,1fr);min-height:15rem}
 .preferences-layout>nav{align-content:start;padding:.5rem;margin:0;background:var(--control);border-inline-end:1px solid var(--line)}
 .preferences-layout>.settings-body{align-content:start}

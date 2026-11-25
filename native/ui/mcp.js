@@ -44,7 +44,29 @@ function showMcpActivity(state){
 function mcpFeedback(text){
   el(window.KeyKeep?'settingsMessage':'mcpFeedback').textContent=text;
 }
+async function renderToolCatalog(){
+  if(el('toolList').childElementCount)return;
+  const {tools}=await call('mcpToolCatalog');
+  const rows=tools.map(tool=>{
+    const row=document.createElement('article');
+    const name=document.createElement('code');name.textContent=tool.name;
+    const description=document.createElement('p');description.textContent=tool.description;
+    row.append(name,description);
+    const schema=tool.inputSchema;
+    for(const [label,fields] of [
+      ['Обязательные',schema.required || []],
+      ['Дополнительные',Object.keys(schema.properties).filter(k=>!schema.required?.includes(k))]
+    ]){
+      if(!fields.length)continue;
+      const line=document.createElement('p');line.className='tool-params';
+      line.textContent=label+' параметры: '+fields.join(', ');row.append(line);
+    }
+    return row;
+  });
+  setChildren(el('toolList'),...rows);el('toolCount').textContent=String(rows.length);
+}
 async function renderMcp(){
+  if(!window.KeyKeep && el('generalDialog').open && !el('mcpPane').hidden)await renderToolCatalog();
   const locked=el('vault').hidden;
   const state=locked?{running:false,writable:false}:await call('mcpStatus');
   const enabled=window.KeyKeep?state.running:await call('mcpPreference');

@@ -40,7 +40,7 @@ function on(id, event, fn) {
 function screen(name) { document.body.dataset.screen = name; }
 let pendingAutoUnlock=false;
 function maybePromptFingerprint(){
-  if(!pendingAutoUnlock || document.hidden || (!window.KeyKeep && !document.hasFocus()) || el('gate').hidden)return;
+  if(!pendingAutoUnlock || el('generalDialog').open || document.hidden || (!window.KeyKeep && !document.hasFocus()) || el('gate').hidden)return;
   pendingAutoUnlock=false;
   el('bioUnlock').click();
 }
