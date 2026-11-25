@@ -55,6 +55,10 @@ impl Mock {
                 let auth = req.headers().iter().any(|h| h.field.equiv("Authorization"));
                 let mut store = files.lock().unwrap();
                 let (status,data)=match (req.method().as_str(),url.path()){
+                    ("PUT","/resources") if path.ends_with(".keykeep-writing")=>{
+                        if store.data.contains_key(path.as_ref()){(409,vec![])}else{store.data.insert(path.to_string(),vec![]);(201,vec![])}
+                    }
+                    ("DELETE","/resources") if path.ends_with(".keykeep-writing")=>{store.data.remove(path.as_ref());(204,vec![])},
                     ("PUT","/resources")=>(201,vec![]),
                     ("GET","/resources")=>match store.data.get(path.as_ref()){
                         None=>(404,vec![]),Some(d)=>(200,json!({"sha256":format!("{:x}",Sha256::digest(d)),"size":d.len(),"modified":"2026-01-01"}).to_string().into_bytes())
@@ -399,4 +403,73 @@ fn shared_account_requires_opt_in_and_never_persists_its_token_in_the_vault() {
         .call(json!({"op":"diskBind","enabled":false}))
         .unwrap();
     assert!(session.call(upload).is_err());
+}
+
+#[test]
+fn automatic_two_open_vaults_merge_and_resolve_conflicts() {
+    use crate::session::Session;
+    let mock = Mock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let open = |name: &str| {
+        let mut session = Session::new(tmp.path().join(name), [3; 32]).unwrap();
+        session
+            .call(json!({"op":"create","pin":"fixture"}))
+            .unwrap();
+        let disk = &mut session.unlocked.as_mut().unwrap().1.disk;
+        disk.mock_api = Some(format!("{}/resources", mock.root));
+        disk.token = "test".into();
+        session
+            .call(json!({"op":"diskAutoConfigure","enabled":true,"password":"shared-fixture"}))
+            .unwrap();
+        session
+    };
+    let sync = |session: &mut Session, choices: Value| {
+        session
+            .call(json!({"op":"diskAutoSync","choices":choices}))
+            .unwrap();
+        for _ in 0..1000 {
+            let state = session.call(json!({"op":"diskPoll"})).unwrap();
+            if state["pending"] == false {
+                return state["result"].clone();
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("automatic job timeout");
+    };
+    let save = |session: &mut Session, id: &str, title: &str, password: &str| {
+        session.call(json!({"op":"save","id":id,"time":"2026-11-26T09:00:00Z","values":{"title":title,"username":"fixture","password":password,"folderId":"root"}})).unwrap().as_str().unwrap().to_owned()
+    };
+    let mut mac = open("mac.kk");
+    let mut android = open("android.kk");
+    let id = save(&mut mac, "", "first", "initial");
+    sync(&mut mac, Value::Null);
+    sync(&mut android, Value::Null);
+    assert_eq!(
+        android.call(json!({"op":"get","id":id})).unwrap()["password"],
+        "initial"
+    );
+    save(&mut mac, &id, "first", "mac-edit");
+    let other = save(&mut android, "", "second", "android-edit");
+    sync(&mut mac, Value::Null);
+    sync(&mut android, Value::Null);
+    sync(&mut mac, Value::Null);
+    assert_eq!(
+        mac.call(json!({"op":"get","id":other})).unwrap()["password"],
+        "android-edit"
+    );
+    save(&mut android, &id, "first", "android-conflict");
+    save(&mut mac, &id, "first", "mac-conflict");
+    sync(&mut mac, Value::Null);
+    let conflict = sync(&mut android, Value::Null);
+    assert_eq!(conflict["conflicts"].as_array().unwrap().len(), 1);
+    let key = conflict["conflicts"][0]["id"].as_str().unwrap();
+    sync(
+        &mut android,
+        json!({"versions":{key:"local"},"local":conflict["local"],"remote":conflict["remote"]}),
+    );
+    sync(&mut mac, Value::Null);
+    let entry = mac.call(json!({"op":"get","id":id})).unwrap();
+    assert_eq!(entry["password"], "android-conflict");
+    assert!(entry["history"].to_string().contains("mac-conflict"));
+    assert_eq!(sync(&mut mac, Value::Null)["unchanged"], true);
 }

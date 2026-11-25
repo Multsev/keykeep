@@ -20,7 +20,7 @@ pub struct Session {
     restore_revision: Option<Vec<u8>>,
     attempts: crate::attempts::Attempts,
     erasing: bool,
-    path: PathBuf,
+    pub(crate) path: PathBuf,
     state_path: PathBuf,
     device: Zeroizing<[u8; 32]>,
     pub(crate) unlocked: Option<(Zeroizing<String>, Vault)>,
@@ -594,6 +594,19 @@ impl Session {
             }
             "save" | "renameEntry" | "addFolder" => {
                 let mut next = v.clone();
+                if op == "save"
+                    && let Some(expected) = r["expectedUpdated"].as_str()
+                    && !arg("id")?.is_empty()
+                {
+                    let old = v
+                        .entries
+                        .iter()
+                        .find(|e| e.id == r["id"])
+                        .ok_or("Запись удалена. Создайте новую, чтобы сохранить правки.")?;
+                    if old.updated_at != expected {
+                        return Err("Запись изменилась во время редактирования");
+                    }
+                }
                 let id = if op == "addFolder" {
                     let parent = arg("parent")?;
                     let name = arg("name")?.trim();
@@ -660,7 +673,7 @@ impl Session {
         }
         if op == "diskStatus" {
             return Ok(
-                json!({"client":v.disk.client,"folder":v.disk.folder,"enabled":v.disk.shared_binding.as_ref().map_or(!v.disk.token.is_empty(), |id|!id.is_empty()),"shared":v.disk.shared_binding.is_some(),"connected":!account.token.is_empty(),"busy":self.cloud_job.is_some(),"pendingUpload":v.disk.upload.is_some(),"localModified":fs::metadata(&self.path).and_then(|m|m.modified()).ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_secs())}),
+                json!({"automatic":!v.disk.auto_password.is_empty(),"client":v.disk.client,"folder":v.disk.folder,"enabled":v.disk.shared_binding.as_ref().map_or(!v.disk.token.is_empty(), |id|!id.is_empty()),"shared":v.disk.shared_binding.is_some(),"connected":!account.token.is_empty(),"busy":self.cloud_job.is_some(),"pendingUpload":v.disk.upload.is_some(),"localModified":fs::metadata(&self.path).and_then(|m|m.modified()).ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_secs())}),
             );
         }
         if op == "diskPoll" {
@@ -704,7 +717,8 @@ impl Session {
                     self.unlocked.as_mut().unwrap().1 = next;
                     json!({"connected":true})
                 }
-                outcome @ (Outcome::Restore(..) | Outcome::Merged(..)) => {
+                outcome @ (Outcome::Restore(..) | Outcome::Merged(..) | Outcome::Automatic(..)) => {
+                    let automatic = matches!(outcome, Outcome::Automatic(..));
                     let current = fs::read(&self.path).map_err(|_| "Ошибка чтения")?;
                     if expected != Some(Sha256::digest(&current).to_vec()) {
                         return Err(
@@ -716,10 +730,13 @@ impl Session {
                             crate::kdbx::import(&data, &password, None)?,
                             format!("{:x}", Sha256::digest(&data)),
                         ),
-                        Outcome::Merged(vault, digest) => (*vault, digest),
+                        Outcome::Merged(vault, digest) | Outcome::Automatic(vault, digest) => {
+                            (*vault, digest)
+                        }
                         _ => unreachable!(),
                     };
                     next.disk = v.disk.clone();
+                    next.disk.auto_base = crate::yandex::automatic::baseline(&next)?;
                     next.disk.synced = Some(crate::yandex::SyncVersion {
                         remote: remote_digest,
                         local: Self::content_digest(&next)?,
@@ -727,17 +744,23 @@ impl Session {
                     next.disk.upload = None;
                     next.mcp_token.clone_from(&v.mcp_token);
                     next.trash.clone_from(&v.trash);
-                    self.mcp = None;
-                    storage::persist(
-                        &self.state_path.with_extension("before-restore.kk"),
-                        &current,
-                    )
-                    .map_err(|_| "Не удалось сохранить локальный снимок")?;
+                    let refreshed =
+                        !automatic || next.entries != v.entries || next.folders != v.folders;
+                    if refreshed {
+                        storage::persist(
+                            &self.state_path.with_extension("before-restore.kk"),
+                            &current,
+                        )
+                        .map_err(|_| "Не удалось сохранить локальный снимок")?;
+                    }
+                    if !automatic {
+                        self.mcp = None;
+                    }
                     self.write(&next, pin)?;
                     self.deleted_entry = None;
                     self.unlocked.as_mut().unwrap().1 = next;
                     let _ = fs::remove_file(self.state_path.with_extension("pending-upload.kdbx"));
-                    json!({"restored":true})
+                    json!({"restored":refreshed})
                 }
             };
             return Ok(json!({"pending":false,"result":value}));
@@ -746,10 +769,29 @@ impl Session {
             return Err("Дождитесь завершения текущей операции");
         }
         match op {
-            "diskBind" | "diskConfigure" | "diskAuthorize" | "diskDisconnect" | "diskCallback"
-            | "diskCancelUpload" => {
+            "diskAutoConfigure" | "diskBind" | "diskConfigure" | "diskAuthorize"
+            | "diskDisconnect" | "diskCallback" | "diskCancelUpload" => {
                 let mut next = v.clone();
                 let value = match op {
+                    "diskAutoConfigure" => {
+                        next.disk.auto_password = if r["enabled"] == true {
+                            if account.token.is_empty() {
+                                return Err("Сначала подключите Яндекс Диск");
+                            }
+                            let password = arg("password")?;
+                            if password.is_empty() {
+                                return Err("Введите пароль облачной базы KeePass");
+                            }
+                            if next.disk.auto_password != password {
+                                next.disk.synced = None;
+                                next.disk.auto_base.clear();
+                            }
+                            password.into()
+                        } else {
+                            String::new()
+                        };
+                        Value::Null
+                    }
                     "diskBind" => {
                         let enabled = r["enabled"]
                             .as_bool()
@@ -824,6 +866,20 @@ impl Session {
                 }
                 let expected = pending.expected.clone();
                 Job::start(move |c| c.upload(bytes, expected), account)
+            }
+            "diskAutoSync" => {
+                if account.auto_password.is_empty() || account.upload.is_some() {
+                    return Err("Автообмен выключен или ожидает ручной отправки");
+                }
+                let mut local = v.clone();
+                local.disk = Default::default();
+                local.mcp_token.clear();
+                let digest = Self::content_digest(v)?;
+                self.restore_revision = Some(
+                    Sha256::digest(fs::read(&self.path).map_err(|_| "Ошибка чтения")?).to_vec(),
+                );
+                let choices = r["choices"].clone();
+                Job::start(move |c| c.automatic(local, digest, choices), account)
             }
             "diskInspect" => Job::start(Client::inspect, account),
             "diskFolders" | "diskVersions" => {

@@ -12,3 +12,5 @@ bool kk_initialize_device(void *session, const uint8_t *key);
 char *kk_shared_oauth(const char *request);
 void *kk_mcp_signal(void *session);
 void kk_wait_signal(void *signal);
+
+void kk_relocate(void *session, const char *path);

@@ -10,6 +10,7 @@ function clearDiskPreview(){
 async function renderDisk(){
   const state=await call('diskStatus');
   el('pendingUpload').hidden=!state.pendingUpload;
+  el('diskAuto').textContent=state.automatic?'Выключить автообмен':'Включить автообмен';
   if(!window.KeyKeep){
     el('legacyClientLabel').hidden=true;
     el('diskEnableLabel').hidden=false;
@@ -26,8 +27,9 @@ async function renderDisk(){
   el('diskActions').hidden=el('diskDisconnect').hidden=!state.connected;
   el('diskConnect').hidden=state.connected;
 }
-async function awaitDisk(){
+async function awaitDisk(valid=()=>true){
   for(;;){
+    if(!valid())throw Error('Обмен завершён при блокировке');
     const state=await call('diskPoll');
     if(!state.pending)return state.result;
     await new Promise(resolve=>setTimeout(resolve,250));
@@ -38,7 +40,7 @@ async function diskTask(action){
   diskBusy=true;
   try{await action();}
   catch(e){if(!el('vault').hidden)el('diskMessage').textContent=e.message;}
-  finally{diskBusy=false;}
+  finally{diskBusy=false;window.receiveVaultFiles?.();}
 }
 window.keykeepOAuthReady=async()=>{
   if(el('vault').hidden || diskBusy)return;
@@ -61,6 +63,67 @@ async function retryOnUnlock(){
     catch(e){el('message').textContent='Отправка на Диск отложена. '+e.message;}
   });
 }
+let autoTimer,autoGeneration=0,autoEnabled=false,autoChoices=null,conflictPending=false;
+function stopAuto(){
+  ++autoGeneration;clearTimeout(autoTimer);autoEnabled=false;autoChoices=null;conflictPending=false;
+  el('diskConflicts').hidden=true;setChildren(el('diskConflicts'));el('diskAutoState').textContent='';
+}
+function scheduleAuto(delay=15000){
+  clearTimeout(autoTimer);
+  if(autoEnabled && !document.hidden && !el('vault').hidden && !conflictPending)autoTimer=setTimeout(runAuto,delay);
+}
+async function startAuto(){
+  const generation=autoGeneration,status=await call('diskStatus');
+  if(generation!==autoGeneration)return;
+  autoEnabled=status.automatic && status.connected;
+  scheduleAuto(0);
+}
+function showSyncConflicts(result){
+  conflictPending=true;
+  const box=el('diskConflicts'),versions={};setChildren(box);box.hidden=false;
+  for(const item of result.conflicts){
+    const label=document.createElement('label'),select=document.createElement('select');
+    label.textContent=item.name;
+    select.append(new Option('Выберите версию',''),new Option(item.localExists?'С этого устройства':'Удалить по локальной версии','local'),new Option(item.remoteExists?'С Яндекс Диска':'Удалить по версии на Диске','remote'));
+    select.onchange=()=>{versions[item.id]=select.value;};
+    label.append(select);box.append(label);
+  }
+  box.append(actionButton('Применить выбор',()=>{
+    if(result.conflicts.some(item=>!versions[item.id]))return;
+    autoChoices={remote:result.remote,local:result.local,versions};conflictPending=false;box.hidden=true;scheduleAuto(0);
+  }));
+  el('message').textContent='Конфликт версий. Выберите запись в настройках Яндекс Диска.';
+}
+async function runAuto(){
+  if(!autoEnabled || document.hidden || el('vault').hidden)return;
+  if(diskBusy || catalogBusy){scheduleAuto(1200);return;}
+  const generation=autoGeneration;diskBusy=true;
+  try{
+    await call('diskAutoSync',{choices:autoChoices});autoChoices=null;
+    const result=await awaitDisk(()=>generation===autoGeneration);
+    if(generation!==autoGeneration)return;
+    if(result.conflicts){showSyncConflicts(result);return;}
+    if(result.restored){
+      const item=current, dirty=entryModified();
+      await refresh();
+      if(item?.id && current===item && !dirty && !entryModified()){
+        if(metal.find('data-entry',item.id)){
+          const updated=await call('get',{id:item.id});
+          if(current===item && !entryModified() && generation===autoGeneration)edit(updated);
+        }
+        else {current=null;el('editor').hidden=true;screen('entries');}
+      }
+    }
+    el('diskAutoState').textContent='Синхронизировано';
+  }catch(error){
+    if(generation===autoGeneration)el('diskAutoState').textContent=error.message;
+  }finally{
+    diskBusy=false;if(generation===autoGeneration)scheduleAuto();
+    window.receiveVaultFiles?.();
+  }
+}
+window.addEventListener('focus',()=>scheduleAuto(0));
+document.addEventListener('visibilitychange',()=>scheduleAuto(0));
 document.addEventListener('DOMContentLoaded',()=>{
   const act=(id,fn)=>on(id,'click',()=>diskTask(fn));
   const configure=async()=>{
@@ -73,18 +136,23 @@ document.addEventListener('DOMContentLoaded',()=>{
         await call('diskConfigure',{client:previous.client,folder});
       }else await call('diskBind',{enabled:el('diskEnabled').checked,folder});
     }
-    clearDiskPreview();await renderDisk();
+    clearDiskPreview();await renderDisk();stopAuto();await startAuto();
   };
   el('diskEnabled').onchange=()=>{
     el('diskFolderLabel').hidden=!el('diskEnabled').checked;
     el('diskActions').hidden=true;clearDiskPreview();
   };
   if(!window.KeyKeep)el('diskFolder').addEventListener('input',()=>{el('diskActions').hidden=true;});
+  act('diskAuto',async()=>{
+    const {automatic}=await call('diskStatus');
+    await call('diskAutoConfigure',{enabled:!automatic,password:el('diskPassword').value});
+    el('diskPassword').value='';stopAuto();await renderDisk();await startAuto();
+  });
   act('diskRetry',retryUpload);
   act('diskCancelUpload',async()=>{await call('diskCancelUpload');await renderDisk();el('diskMessage').textContent='Отправка отменена';});
   act('diskSave',async()=>{await configure();el('diskMessage').textContent='Настройки сохранены';});
   act('diskConnect',async()=>{await configure();await call('diskConnect');});
-  act('diskDisconnect',async()=>{await call('diskDisconnect');clearDiskPreview();await renderDisk();});
+  act('diskDisconnect',async()=>{await call('diskDisconnect');stopAuto();clearDiskPreview();await renderDisk();});
   act('diskList',async()=>{
     await call('diskFolders');const {items}=await awaitDisk();
     setChildren(el('diskFolderNames'), ...items.map(i=>new Option(i.name,i.name)));

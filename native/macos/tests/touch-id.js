@@ -16,14 +16,11 @@ if (!(await call('bioStatus')).available) throw Error('Touch ID недоступ
 if (await call('testTouchPreflight')) return 'Touch ID: отдельное тестовое хранилище готово, датчик доступен';
 const pin = 'fixture-touch-pin';
 el('pin').value=el('repeat').value=pin;
+await until(()=>!el('setupFingerprintLabel').hidden,'настройка при создании');
+el('setupFingerprint').checked=true;
 el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'создание тестовой базы');
-el('settings').click();
-await until(()=>el('security').open && bioState.available && !el('bioToggle').disabled,'настройки');
-el('oldPin').value=pin;
-el('bioToggle').click();
-await until(()=>bioState.enabled && el('autoPrompt').checked,'включение отпечатка');
-el('dismiss').click();
+if(!(await call('bioStatus')).enabled)throw Error('Вход по отпечатку не включён');
 el('lock').click();
 await until(()=>!el('gate').hidden && !el('bioUnlock').hidden && !el('bioUnlock').disabled,'блокировка');
 el('bioUnlock').click();

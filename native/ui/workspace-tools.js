@@ -111,5 +111,5 @@ function installCardTools(){
     el(button).onclick=()=>{el(button).hidden=true;el(block).hidden=false;el(key).focus();};
   }
   el('title').addEventListener('input',paintDraft);
-  el('cancelDraft').onclick=()=>{draftMap.delete(current.folderId);current=null;el('editor').hidden=true;screen('entries');refresh();};
+  el('cancelDraft').onclick=()=>{draftMap.delete(current.folderId);current=null;el('editor').hidden=true;screen('entries');refresh();window.receiveVaultFiles?.();};
 }

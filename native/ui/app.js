@@ -29,6 +29,7 @@ async function call(op, args = {}) {
   const reply = bridge ? await bridge.postMessage(request) : await androidRequest(request);
   const result = JSON.parse(reply);
   if (result.error) throw new Error(result.error);
+  if(['save','addFolder','editFolder','deleteFolder','deleteEntry','restoreDeleted','renameEntry'].includes(op))scheduleAuto(700);
   return result.value;
 }
 function on(id, event, fn) {
@@ -48,7 +49,7 @@ function maybePromptFingerprint(){
 window.addEventListener('focus',maybePromptFingerprint);
 document.addEventListener('visibilitychange',maybePromptFingerprint);
 async function reset(promptOnOpen=false) {
-  metal.stop();resetTreeTools();
+  el('vaultDestination').hidden=true;stopAuto();metal.stop();resetTreeTools();
   hideUndo();
   if(window.clearMcp)window.clearMcp();
   pendingAutoUnlock=false;
@@ -86,9 +87,10 @@ async function reset(promptOnOpen=false) {
   el('startupExchange').open=false; updateStartupAction();
   if(!exists) await refreshStartupFiles();
   const bio = await biometricStatus();
+  el('setupFingerprintLabel').hidden = !bio.available || bio.enabled;
   el('bioUnlock').hidden = !(exists && bio.available && bio.enabled);
   el('pin').focus();
-  pendingAutoUnlock=promptOnOpen && !el('bioUnlock').hidden && bio.autoPrompt;
+  pendingAutoUnlock=promptOnOpen && !el('bioUnlock').hidden && bio.autoPrompt && (window.KeyKeep || !await call('vaultIncoming'));
   maybePromptFingerprint();
 }
 let selectedVault, activeVaultId, rememberWorkspace=false, catalogBusy=false;
@@ -107,6 +109,15 @@ function setDrawer(open){
   el('toggleCatalog').setAttribute('aria-expanded',String(open));
   el('vaultCatalog').inert=!open;
 }
+window.updateVaultLocation=async()=>{
+  if(window.KeyKeep || !selectedVault)return;
+  const id=activeVaultId,info=await call('vaultLocation');
+  if(id!==activeVaultId)return;
+  el('vaultPath').textContent=info.path;el('revealVaultFile').title=info.path;el('revealVaultFile').setAttribute('aria-label','Открыть папку файла '+info.path);el('locateVault').hidden=!info.missing;
+};
+window.addEventListener('focus',()=>window.updateVaultLocation().catch(()=>{}));
+on('vaultDestination','click',async()=>{if(await call('vaultDestination'))await refreshCatalog();});
+on('locateVault','click',async()=>{await call('vaultRelink');await window.updateVaultLocation();});
 on('revealVaultFile','click',()=>call('vaultRevealFile'));
 el('toggleCatalog').onclick=()=>setDrawer(!document.body.classList.contains('drawer-open'));
 async function refreshCatalog(){
@@ -124,6 +135,7 @@ async function refreshCatalog(){
   el('emptyCreate').hidden=Boolean(selectedVault);
   el('vaultLocation').hidden=!selectedVault;
   el('catalogAdd').hidden=!data.items.length;
+  await window.updateVaultLocation();
   el('activeVaultName').textContent=selectedVault?.name || '';
   el('workspaceTitle').textContent=el('activeVaultName').textContent;
   setChildren(el('catalogRows'),...data.items.map(v=>{
@@ -167,7 +179,7 @@ async function changeVault(op,args){
     const origin=activeVaultId;
     const workspace=rememberWorkspace && op!=='vaultTrash'?captureWorkspace():null;
     const switched=await call(op,args);
-    if(switched.cancelled)return;
+    if(switched.cancelled){if(args.incoming && !el('gate').hidden){pendingAutoUnlock=!el('bioUnlock').hidden && (await biometricStatus()).autoPrompt;maybePromptFingerprint();}return;}
     if(op==='vaultTrash' && args.id!==origin){
       workspaces.delete(args.id);
       await refreshCatalog();
@@ -175,9 +187,9 @@ async function changeVault(op,args){
     }
     if(workspace)workspaces.set(origin,workspace);else workspaces.delete(origin);
     activeVaultId=switched.active;
-    await reset();
-  }catch(e){el('catalogMessage').textContent=e.message;}
-  finally{catalogBusy=false;el('vaultCatalog').inert=!document.body.classList.contains('drawer-open');if(!el('gate').hidden)el('pin').focus();}
+    await reset(true);
+  }catch(e){el(document.body.classList.contains('drawer-open')?'catalogMessage':'message').textContent=e.message;}
+  finally{catalogBusy=false;queueMicrotask(()=>window.receiveVaultFiles?.());el('vaultCatalog').inert=!document.body.classList.contains('drawer-open');if(!el('gate').hidden)el('pin').focus();}
 }
 const addChoice=el('vaultAddChoice');
 el('catalogAdd').onclick=el('emptyCreate').onclick=()=>{
@@ -224,6 +236,7 @@ async function refresh() {
   if (revision !== listing) return;
   el('folderActions').hidden=trashSelected || !window.KeyKeep || folder==='root';
   folderIndex=new Map(data.folders.map(f=>[f.id,f]));
+  if(!folderIndex.has(folder)){folder='root';return refresh();}
   const tree = [];
   const options = [];
   const children = new Map();
@@ -289,6 +302,11 @@ function updateEntryPath(){
 }
 el('title').addEventListener('input',updateEntryPath);
 el('entryFolder').addEventListener('change',updateEntryPath);
+function entryModified(){
+  if(!current || el('editor').hidden)return false;
+  return !current.id || keys.some(k=>el(k).value!==(current[k]||'')) ||
+    el('entryFolder').value!==current.folderId || JSON.stringify(collectFields().map(f=>[f.name,f.type,f.value]))!==JSON.stringify((current.customFields||[]).map(f=>[f.name,f.type,f.value]));
+}
 function edit(item={id:'',folderId:folder,customFields:[]}) {
   el('entryFolderLabel').hidden=!window.KeyKeep || !item.id;
   el('deleteEntry').hidden=!item.id;
@@ -309,6 +327,7 @@ async function refreshStartupFiles(){
   el('startupDbName').textContent=files.database;
   el('startupKeyName').textContent=files.keyfile;
   if(!window.KeyKeep){
+    el('vaultDestination').hidden=!files.database;
     el('startupExchange').hidden=!files.database;
     el('startupExchange').open=Boolean(files.database);
   }else if(files.database || files.keyfile)el('startupExchange').open=true;
@@ -319,7 +338,7 @@ for(const [id,op] of [['startupDb','pickDatabase'],['startupKey','pickKeyfile'],
   on(id,'click',async()=>{await call(op);await refreshStartupFiles();});
 }
 async function showEntries(){
-  el('gate').hidden=true;el('vault').hidden=false;screen('folders');
+  el('vaultDestination').hidden=true;el('gate').hidden=true;el('vault').hidden=false;screen('folders');
   let previous;
   if(!window.KeyKeep){
     setDrawer(false);await refreshCatalog();el('searchToggle').focus();
@@ -334,7 +353,7 @@ async function showEntries(){
     catch(error){el('mcpFeedback').textContent=error.message;}
   }
   if(previous){if(previous.editor)edit(previous.editor);screen(previous.screen);}
-  metal.fade(el('vault'));await window.keykeepOAuthReady();await retryOnUnlock();
+  metal.fade(el('vault'));await window.keykeepOAuthReady();await retryOnUnlock();await startAuto();window.receiveVaultFiles?.();
 }
 async function finishLogin(){
   if(!window.KeyKeep)await call('vaultRemember',{enabled:el('rememberVault').checked});
@@ -353,7 +372,13 @@ on('access','submit',async()=>{
     await call(exists?'unlock':'create',{pin});
     if(!exists)await call('clearExchange');
   }
+  let enrollmentError;
+  if(!el('setupFingerprintLabel').hidden && el('setupFingerprint').checked){
+    try{await call('bioEnable',{currentPin:pin});}
+    catch(error){enrollmentError=error;}
+  }
   await finishLogin();
+  if(enrollmentError)el('message').textContent=enrollmentError.message;
 });
 let bioState = {}, hideTimer;
 async function biometricStatus() {
@@ -431,9 +456,19 @@ on('editor','submit',async()=>{
   values.username=formatLogin(values.username);
   values.website=formatWebsite(values.website);
   values.title=values.title.trim();values.note=values.note.trim();
-  const id=await call('save',{id:current.id,values,time:new Date().toISOString()});
+  const record=current;
+  const request={id:record.id,values,time:new Date().toISOString(),expectedUpdated:record.updatedAt};
+  let id;
+  try{id=await call('save',request);}catch(error){
+    if(error.message!=='Запись изменилась во время редактирования')throw error;
+    const latest=await call('get',{id:record.id});
+    requestDeletion('Запись изменилась на другом устройстве','Сохранить ваши правки? Предыдущая версия останется в истории.',async()=>{
+      const saved=await call('save',{...request,expectedUpdated:latest.updatedAt});
+      edit(await call('get',{id:saved}));await refresh();
+    },'Сохранить');return;
+  }
   if(!current.id)draftMap.delete(current.folderId);
-  edit(await call('get',{id}));await refresh();
+  edit(await call('get',{id}));await refresh();window.receiveVaultFiles?.();
 });
 for(const id of ['website','note'])el(id).addEventListener('input',updateSiteButton);
 on('openWebsite','click',async()=>{
@@ -481,7 +516,21 @@ document.addEventListener('keydown',e=>{
   const b=e.target.closest('nav button');
   if(b && ['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const next=e.key==='ArrowUp'?b.previousElementSibling:b.nextElementSibling;if(next)next.focus();}
 });
-reset(true).catch(()=>{el('message').textContent='Не удалось открыть локальное хранилище';});
+let receivingFiles=false,filesReady=false;
+window.receiveVaultFiles=async()=>{
+  if(window.KeyKeep || !filesReady || !activeVaultId || receivingFiles || catalogBusy || diskBusy || document.querySelector('dialog[open]'))return;
+  receivingFiles=true;
+  try{
+    if(entryModified() && !el('vault').hidden && await call('vaultIncoming')){
+      el('message').textContent='Сохраните или закройте карточку, чтобы открыть выбранный файл.';return;
+    }
+    while(!catalogBusy && !diskBusy && (el('gate').hidden || !el('startupExchange').open) && await call('vaultIncoming'))await changeVault('vaultAddFile',{incoming:true,initial:!selectedVault});}
+  finally{receivingFiles=false;}
+};
+if(!window.KeyKeep){
+  document.addEventListener('close',()=>setTimeout(window.receiveVaultFiles,0),true);
+}
+reset(true).then(()=>{filesReady=true;return window.receiveVaultFiles();}).catch(()=>{el('message').textContent='Не удалось открыть локальное хранилище';});
 
 window.keykeepBack = () => {
   if (el('security').open) { closeSettings(); return true; }
@@ -516,7 +565,8 @@ on('exportDb','click',async()=>{
 });
 
 let deletion = null;
-function requestDeletion(title, description, operation) {
+function requestDeletion(title, description, operation, action="Удалить") {
+  el('acceptDelete').textContent=action;
   deletion = operation;
   el('deleteTitle').textContent = title;
   el('deleteDescription').textContent = description;

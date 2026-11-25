@@ -15,6 +15,7 @@ use std::{
 };
 use url::Url;
 use zeroize::Zeroizing;
+pub(crate) mod automatic;
 type Result<T> = std::result::Result<T, &'static str>;
 const CALLBACK: &str = "keykeep://oauth/callback";
 const SERVICE: &str = "Ошибка запроса к Яндекс Диску";
@@ -26,6 +27,8 @@ pub struct Account {
     #[cfg(test)]
     #[serde(skip)]
     mock_api: Option<String>,
+    pub(crate) auto_password: String,
+    pub(crate) auto_base: automatic::Baseline,
     pub client: String,
     pub folder: String,
     pub token: String,
@@ -56,6 +59,8 @@ impl Default for Account {
         Self {
             #[cfg(test)]
             mock_api: None,
+            auto_password: String::new(),
+            auto_base: Default::default(),
             client: option_env!("YANDEX_OAUTH_CLIENT_ID").unwrap_or("").into(),
             folder: "KeyKeep".into(),
             token: String::new(),
@@ -92,6 +97,8 @@ impl Account {
             return Err("Укажите имя папки без пути");
         }
         if client.trim() != self.client || folder.trim() != self.folder {
+            self.auto_password.clear();
+            self.auto_base.clear();
             self.upload = None;
             self.synced = None;
         }
@@ -152,6 +159,8 @@ impl Account {
         Ok((code, self.pending.take().unwrap().verifier))
     }
     pub fn disconnect(&mut self) {
+        self.auto_password.clear();
+        self.auto_base.clear();
         self.upload = None;
         self.synced = None;
         self.token.clear();
@@ -164,6 +173,7 @@ pub enum Outcome {
     Token(Zeroizing<String>),
     Restore(Vec<u8>, Zeroizing<String>),
     Merged(Box<crate::legacy::Vault>, String),
+    Automatic(Box<crate::legacy::Vault>, String),
 }
 pub struct Job {
     rx: mpsc::Receiver<Result<Outcome>>,
@@ -417,8 +427,29 @@ impl Client {
         );
         self.put(&path, data, false)
     }
-    pub fn upload(self, bytes: Vec<u8>, expected: Value) -> Result<Outcome> {
+    pub fn upload(mut self, bytes: Vec<u8>, expected: Value) -> Result<Outcome> {
         self.prepare()?;
+        // Serialize the final compare and publish across KeyKeep clients.
+        let lock = format!("{}/.keykeep-writing", self.dir());
+        match self.api("PUT", "", &[("path", &lock)])?.status() {
+            201 => {}
+            409 => {
+                return Err(
+                    "Диск занят другим клиентом. Если все клиенты закрыты, удалите оставшуюся папку .keykeep-writing.",
+                );
+            }
+            _ => return Err(SERVICE),
+        }
+        let result = self.publish(bytes, expected);
+        // Unlock even when the vault owner cancelled the job.
+        self.cancelled = Arc::new(AtomicBool::new(false));
+        let released = self.api("DELETE", "", &[("path", &lock), ("permanently", "true")])?;
+        if !(200..300).contains(&released.status()) {
+            return Err(SERVICE);
+        }
+        result
+    }
+    fn publish(&self, bytes: Vec<u8>, expected: Value) -> Result<Outcome> {
         let path = self.path();
         let info = self.info(&path)?;
         if info["sha256"].as_str() == Some(format!("{:x}", Sha256::digest(&bytes)).as_str()) {

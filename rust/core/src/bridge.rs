@@ -6,6 +6,16 @@ use std::{
     ptr,
 };
 
+// Native catalog verified the file identity and retains the original profile lock.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn kk_relocate(s: *mut Session, path: *const c_char) {
+    if let Some(s) = unsafe { s.as_mut() }
+        && !path.is_null()
+        && let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str()
+    {
+        s.path = path.into();
+    }
+}
 #[unsafe(no_mangle)]
 unsafe extern "C" fn kk_new(path: *const c_char) -> *mut Session {
     if path.is_null() {

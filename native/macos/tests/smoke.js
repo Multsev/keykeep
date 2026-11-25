@@ -6,6 +6,17 @@ const until = async (condition, step) => {
   }
   throw Error(step);
 };
+if(externalTest){
+  await until(()=>!catalogBusy && el('startupExchange').open && el('startupDbName').textContent,'Finder document event');
+  el('pin').value=el('repeat').value='9';el('startupPassword').value='fixture-password';el('enter').click();
+  await until(()=>!el('vault').hidden && el('rows').textContent.includes('ImportFixture'),'import Finder document');
+  const path=await call('testMoveFile');
+  if(!path.normalize('NFC').endsWith('Перемещённое.kk'))throw Error('bookmark still points to old path');
+  const id=await call('save',{id:'',values:{title:'After move',username:'fixture',password:'fixture',folderId:'root'},time:new Date().toISOString()});
+  await window.updateVaultLocation();
+  if(el('vaultPath').textContent!==path || !(await call('get',{id})).title)throw Error('live vault relocation');
+  return 'PASS Finder document, KDBX import, bookmark after rename and save in open session';
+}
 if(!/^\d+\.\d+\.\d+/.test(el('buildVersion').textContent) || !/^\d{4}-\d{2}-\d{2}$/.test(el('buildDate').textContent))throw Error('build metadata');
 await until(()=>!el('emptyCreate').hidden && el('access').hidden,'empty vault catalog');
 if(el('catalogRows').children.length || el('workspaceTitle').textContent || !el('vaultLocation').hidden)throw Error('phantom vault');
@@ -29,7 +40,7 @@ if(el('mcpCatalog').open)throw Error('cannot collapse tool catalog');
 if(!el('mcpCopy').disabled || !el('mcpCopy').getClientRects().length)throw Error('locked copy visibility');
 el('mcpToggle').click();await until(()=>el('mcpState').textContent==='Ожидает открытия хранилища','MCP preference while locked');
 el('generalClose').click();el('emptyCreate').click();el(startupImport?'addFromFile':'createBlank').click();
-await until(()=>!catalogBusy && !el('access').hidden && el('activeVaultName').textContent==='Основное','choose folder and name first');
+await until(()=>!catalogBusy && !el('access').hidden && (startupImport || el('activeVaultName').textContent==='Основное'),'choose folder and name first');
 if(startupImport){
   await until(()=>el('startupExchange').open && el('startupDbName').textContent,'selected database');
   el('pin').value=el('repeat').value='9';
@@ -56,7 +67,7 @@ el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'create');
 if(testAddFile){
   const id=await call('save',{id:'',values:{title:'Copied entry',username:'fixture',password:'fixture',folderId:'root'},time:new Date().toISOString()});
-  el('toggleCatalog').click();el('catalogAdd').click();el('addFromFile').click();
+  await call('testDropVault');
   await until(()=>!catalogBusy && el('activeVaultName').textContent==='Копия' && el('enter').textContent==='Открыть','attach local file');
   el('pin').value='7';el('enter').click();
   await until(()=>!el('vault').hidden && metal.find('data-entry',id),'unlock attached file');

@@ -29,6 +29,28 @@ func deviceKey(for path: URL, account:String, replacing: Bool = false) throws ->
     return data
 }
 
+private final class VaultWebView: WKWebView {
+    var openFiles:(([URL])->Void)?
+    private func files(_ board:NSPasteboard)->[URL]{
+        guard board.types?.contains(.fileURL)==true else{return []}
+        let urls=board.readObjects(forClasses:[NSURL.self],options:[.urlReadingFileURLsOnly:true]) as? [URL] ?? []
+        return urls.filter{["kk","kdbx"].contains($0.pathExtension.lowercased())}
+    }
+    override func draggingEntered(_ sender:NSDraggingInfo)->NSDragOperation {
+        files(sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
+    }
+    override func draggingUpdated(_ sender:NSDraggingInfo)->NSDragOperation {
+        files(sender.draggingPasteboard).isEmpty ? super.draggingUpdated(sender) : .copy
+    }
+    override func performDragOperation(_ sender:NSDraggingInfo)->Bool {
+        acceptFiles(sender.draggingPasteboard) || super.performDragOperation(sender)
+    }
+    func acceptFiles(_ board:NSPasteboard)->Bool {
+        let urls=files(board)
+        guard !urls.isEmpty else{return false}
+        openFiles?(urls);return true
+    }
+}
 final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWithReply, WKNavigationDelegate {
     #if UI_TEST
     let testClipboard=NSPasteboard.withUniqueName()
@@ -48,8 +70,14 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
     #endif
     let diskAccount=DiskAccount()
     var oauthCallback: String?
+    private var incomingFiles=[URL]()
+    private func enqueue(_ urls:[URL]){
+        for file in urls where file.isFileURL && ["kk","kdbx"].contains(file.pathExtension.lowercased()) && !incomingFiles.contains(file){incomingFiles.append(file)}
+        if !incomingFiles.isEmpty {window?.makeKeyAndOrderFront(nil);web?.evaluateJavaScript("window.receiveVaultFiles?.()")}
+    }
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url=urls.first, url.scheme=="keykeep",url.host=="oauth",url.path=="/callback" else {return}
+        enqueue(urls.filter{$0.isFileURL})
+        guard let url=urls.first(where:{!$0.isFileURL}), url.scheme=="keykeep",url.host=="oauth",url.path=="/callback" else {return}
         if diskAccount.callback(url,completion:{self.web?.evaluateJavaScript("window.sharedDiskChanged?.()")}) {return}
         oauthCallback=url.absoluteString
         web?.evaluateJavaScript("window.keykeepOAuthReady?.()")
@@ -87,7 +115,10 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "vault")
-        web = WKWebView(frame: .zero, configuration: config)
+        let view=VaultWebView(frame:.zero,configuration:config)
+        view.openFiles={ [weak self] urls in self?.enqueue(urls) }
+        view.registerForDraggedTypes(Array(Set(view.registeredDraggedTypes+[.fileURL])))
+        web=view
         web.navigationDelegate = self
         window = NSWindow(contentRect: NSRect(x: 0,y: 0,width: 900,height: 600), styleMask: [.titled,.closable,.resizable,.miniaturizable], backing: .buffered, defer: false)
         window.title = "KeyKeep"; window.contentMinSize = NSSize(width: 400,height: 350)
@@ -100,6 +131,15 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(lock), name: Notification.Name("com.apple.screenIsLocked"), object: nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+    private var sessionFile:URL?
+    private func refreshLocation(){
+        guard let session,let old=sessionFile,activeID != VaultCatalog.empty else{return}
+        if FileManager.default.fileExists(atPath:old.path){catalog.remember(old,for:activeID);return}
+        if let moved=try? catalog.file(activeID),old != moved {
+            kk_relocate(session,moved.path);sessionFile=moved;catalog.remember(moved,for:activeID)
+            web?.evaluateJavaScript("window.updateVaultLocation?.()")
+        }
     }
     private var parked = [String: UnsafeMutableRawPointer]()
     private var rememberActive = false
@@ -192,6 +232,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         if let old {
             if rememberActive {parked[oldID]=old} else {kk_close(old)}
         }
+        sessionFile=file;kk_relocate(next,file.path);catalog.remember(file,for:id)
         rememberActive=cached != nil
         prompt?.invalidate();prompt=nil;importURL=nil;keyFileURL=nil;oauthCallback=nil
         #if !UI_TEST
@@ -231,7 +272,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         testStarted = true
         do {
             let test = try String(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("smoke.js"))
-            webView.callAsyncJavaScript(test, arguments: ["benchCount":Int(ProcessInfo.processInfo.environment["KEYKEEP_MCP_BENCH_COUNT"] ?? "") ?? 0,"testAddFile":ProcessInfo.processInfo.environment["KEYKEEP_TEST_ADD_KK"] == "1","startupImport":importURL != nil,"checkFinder":ProcessInfo.processInfo.environment["KEYKEEP_TEST_FINDER"] == "1"], in: nil, in: .page) { result in
+            webView.callAsyncJavaScript(test, arguments: ["benchCount":Int(ProcessInfo.processInfo.environment["KEYKEEP_MCP_BENCH_COUNT"] ?? "") ?? 0,"externalTest":ProcessInfo.processInfo.environment["KEYKEEP_TEST_EXTERNAL"] == "1","testAddFile":ProcessInfo.processInfo.environment["KEYKEEP_TEST_ADD_KK"] == "1","startupImport":importURL != nil,"checkFinder":ProcessInfo.processInfo.environment["KEYKEEP_TEST_FINDER"] == "1"], in: nil, in: .page) { result in
                 if let root = self.testRoot { try? FileManager.default.removeItem(at: root) }
                 switch result {
                 case .success(let value):
@@ -265,11 +306,12 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             let data = try? JSONSerialization.data(withJSONObject: object)
             replyHandler(data.flatMap { String(data: $0, encoding: .utf8) }, nil)
         }
+        refreshLocation()
         func core(_ args: [String:Any]) -> [String:Any] {
             guard let data = try? JSONSerialization.data(withJSONObject: args),
                   let query = String(data: data, encoding: .utf8),
                   let answer = kk_call(session, query) else { return ["error":"Ошибка операции"] }
-            defer { kk_free_text(answer) }
+            defer { kk_free_text(answer); refreshLocation() }
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
         }
         if ["accountStatus","accountSave","accountConnect","accountDisconnect"].contains(op) {
@@ -337,6 +379,31 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             } catch {reply(["error":"Не удалось сохранить название хранилища"])}
             return
         }
+        if op=="vaultLocation" {
+            let file=try? catalog.file(activeID)
+            let created=(try? catalog.directory(activeID)).map{FileManager.default.fileExists(atPath:$0.appendingPathComponent("vault.created").path)} ?? false
+            reply(["value":["path":file?.path ?? "","missing":created && !(file.map{FileManager.default.fileExists(atPath:$0.path)} ?? false)]]);return
+        }
+        if op=="vaultDestination" {
+            do{
+                guard importURL != nil,(core(["op":"status"])["value"] as? [String:Any])?["exists"] as? Bool == false else{throw PlatformFailure()}
+                let old=try catalog.file(activeID),panel=NSSavePanel()
+                panel.title="Расположение хранилища";panel.directoryURL=old.deletingLastPathComponent()
+                panel.nameFieldStringValue=old.lastPathComponent;panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data]
+                guard panel.runModal() == .OK,let url=panel.url else{reply(["value":false]);return}
+                try catalog.moveDraft(activeID,to:url);kk_relocate(session,url.path);sessionFile=url
+                UserDefaults.standard.set(url.deletingLastPathComponent(),forKey:"vaultSaveDirectory")
+                reply(["value":true])
+            }catch{reply(["error":"Выберите доступную папку и свободное имя файла."])}
+            return
+        }
+        if op=="vaultRelink" {
+            let panel=NSOpenPanel();panel.title="Указать файл хранилища";panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data]
+            guard panel.runModal() == .OK,let file=panel.url else{reply(["value":false]);return}
+            do{try catalog.relink(file,id:activeID);refreshLocation();reply(["value":true])}
+            catch{reply(["error":"Выберите исходный файл этого хранилища."])}
+            return
+        }
         if op=="vaultRevealFile" {
             do {
                 let file=try catalog.file(activeID)
@@ -353,6 +420,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             rememberActive=state?["open"] as? Bool == true && args["enabled"] as? Bool == true
             reply(["value":NSNull()]);return
         }
+        if op=="vaultIncoming" {reply(["value":!incomingFiles.isEmpty]);return}
         if ["vaultCatalog","vaultSelect","vaultNew","vaultAddFile","vaultTrash"].contains(op) {
             if op == "vaultSelect" || (op == "vaultTrash" && args["id"] as? String == activeID) {
                 let readiness=core(["op":"suspendServices"])
@@ -360,7 +428,10 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             }
             do {
                 var source:URL?
-                if op == "vaultAddFile" {
+                if op == "vaultAddFile", args["incoming"] as? Bool == true {
+                    guard !incomingFiles.isEmpty else {reply(["value":["cancelled":true]]);return}
+                    source=incomingFiles.removeFirst()
+                } else if op == "vaultAddFile" {
                     #if UI_TEST
                     if let path=ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] { source=URL(fileURLWithPath:path) }
                     else {
@@ -390,22 +461,27 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                     }
                 } else if op == "vaultNew" || op == "vaultAddFile" {
                     let suggested=source?.deletingPathExtension().lastPathComponent ?? (args["name"] as? String).map { ($0 as NSString).lastPathComponent } ?? "Новое хранилище"
+                    let folder:URL
                     #if UI_TEST
-                    let first=args["initial"] as? Bool == true
-                    let folder=catalog.base.appendingPathComponent("Downloads")
+                    folder=catalog.base.appendingPathComponent("Downloads")
                     try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
-                    let url=folder.appendingPathComponent((first ? "Основное" : "Проверка")+".kk")
                     #else
-                    let panel=NSSavePanel()
-                    panel.title=source == nil ? "Новое хранилище" : "Сохранить импортированное хранилище KeyKeep"
-                    panel.prompt="Выбрать"
-                    panel.nameFieldStringValue=suggested+".kk"
-                    panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data]
-                    panel.isExtensionHidden=false
-                    panel.canCreateDirectories=true
-                    panel.directoryURL=FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first
-                    guard panel.runModal() == .OK, let url=panel.url else {reply(["value":["cancelled":true]]);return}
+                    let last=UserDefaults.standard.url(forKey:"vaultSaveDirectory")
+                    folder=last.flatMap{FileManager.default.isWritableFile(atPath:$0.path) ? $0:nil} ?? FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
                     #endif
+                    let url:URL
+                    if source != nil {url=try catalog.suggestedFile(name:suggested,in:folder)}
+                    else {
+                        #if UI_TEST
+                        url=folder.appendingPathComponent((args["initial"] as? Bool == true ? "Основное":"Проверка")+".kk")
+                        #else
+                        let panel=NSSavePanel();panel.title="Новое хранилище";panel.prompt="Выбрать";panel.directoryURL=folder
+                        panel.nameFieldStringValue=try catalog.suggestedFile(name:suggested,in:folder).lastPathComponent
+                        panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data];panel.isExtensionHidden=false
+                        guard panel.runModal() == .OK,let chosen=panel.url else{reply(["value":["cancelled":true]]);return}
+                        url=chosen
+                        #endif
+                    }
                     guard !FileManager.default.fileExists(atPath:url.path) else {reply(["error":"Файл уже существует. Выберите другое имя."]);return}
                     let readiness=core(["op":"suspendServices"])
                     if readiness["error"] != nil {reply(readiness);return}
@@ -414,6 +490,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                         if let dir=try? catalog.directory(id){try? FileManager.default.removeItem(at:dir)}
                         throw error
                     }
+                    UserDefaults.standard.set(url.deletingLastPathComponent(),forKey:"vaultSaveDirectory")
                     importURL=source;keyFileURL=nil
                 } else if op != "vaultCatalog" {
                     guard let id=args["id"] as? String,
@@ -444,6 +521,26 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             return
         }
         #if UI_TEST
+        if op=="testDropVault" {
+            do{
+                let file=catalog.base.appendingPathComponent("Копия.kk")
+                if !FileManager.default.fileExists(atPath:file.path){try FileManager.default.copyItem(at:catalog.file(activeID),to:file)}
+                let board=NSPasteboard.withUniqueName()
+                defer{board.releaseGlobally()}
+                guard board.writeObjects([file as NSURL]),(web as? VaultWebView)?.acceptFiles(board)==true else{throw PlatformFailure()}
+                reply(["value":true])
+            }catch{reply(["error":"test drop failed"])}
+            return
+        }
+        if op=="testMoveFile" {
+            do{
+                let old=try catalog.file(activeID)
+                let moved=old.deletingLastPathComponent().appendingPathComponent("Перемещённое.kk")
+                try FileManager.default.moveItem(at:old,to:moved)
+                refreshLocation();reply(["value":try catalog.file(activeID).path])
+            }catch{reply(["error":"test move failed"])}
+            return
+        }
         if op == "testPointer" {
             guard let x=args["x"] as? Double, let y=args["y"] as? Double,
                   web.bounds.contains(NSPoint(x:x,y:y)) else {reply(["error":"Invalid test point"]);return}

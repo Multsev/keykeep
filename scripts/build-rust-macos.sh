@@ -33,6 +33,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$bundle_id</string>
 <key>CFBundleName</key><string>KeyKeep</string>
 <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>KeyKeep OAuth</string><key>CFBundleURLSchemes</key><array><string>keykeep</string></array></dict></array>
+<key>CFBundleDocumentTypes</key><array>
+<dict><key>CFBundleTypeName</key><string>KeyKeep Vault</string><key>CFBundleTypeRole</key><string>Editor</string><key>LSHandlerRank</key><string>Owner</string><key>CFBundleTypeExtensions</key><array><string>kk</string></array></dict>
+<dict><key>CFBundleTypeName</key><string>KeePass Database</string><key>CFBundleTypeRole</key><string>Viewer</string><key>LSHandlerRank</key><string>Alternate</string><key>CFBundleTypeExtensions</key><array><string>kdbx</string></array></dict>
+</array>
 <key>CFBundleIconFile</key><string>KeyKeep.icns</string>
 <key>CFBundleExecutable</key><string>KeyKeep</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -40,7 +44,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>$version</string>
 </dict></plist>
 PLIST
-if [[ -n "$probe" ]]; then /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$app/Contents/Info.plist"; fi
+if [[ -n "$probe" ]]; then /usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes" "$app/Contents/Info.plist"; /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$app/Contents/Info.plist"; fi
 signer=-
 if [[ -z "$probe" && ( -n "${KEYKEEP_MAC_SIGN_IDENTITY:-}" || "${CI:-}" != true ) ]]; then
     signer=${KEYKEEP_MAC_SIGN_IDENTITY:-}
