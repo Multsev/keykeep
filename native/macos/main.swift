@@ -56,11 +56,12 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             #endif
             catalog = VaultCatalog(base:base)
-            var selected = VaultCatalog.original
+            var selected = try catalog.items().first?["id"] ?? VaultCatalog.empty
             #if !UI_TEST
             if let saved = UserDefaults.standard.string(forKey:"selectedVault"),
                try catalog.items().contains(where: { $0["id"] == saved }) { selected = saved }
             #endif
+            if selected == VaultCatalog.empty, FileManager.default.fileExists(atPath:try catalog.directory(VaultCatalog.original).appendingPathComponent("vault.erasing").path) {selected=VaultCatalog.original}
             try activateVault(selected)
             #if UI_TEST
             if let fixture=ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] {importURL=URL(fileURLWithPath:fixture)}
@@ -113,9 +114,10 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             if kk_erasing(next) {try finishErasure()}
             else if cached == nil {
                 #if UI_TEST
-                let key=Data(repeating:61,count:32)
+                let rotated=FileManager.default.fileExists(atPath:dir.appendingPathComponent("test-key-rotated").path)
+                let key=Data(repeating:rotated ? 72 : 61,count:32)
                 #else
-                let key=try deviceKey(for:file,account:id)
+                let key = id == VaultCatalog.empty ? Data(repeating:0,count:32) : try deviceKey(for:file,account:id)
                 #endif
                 guard key.withUnsafeBytes({kk_initialize_device(next,$0.bindMemory(to:UInt8.self).baseAddress)}) else {throw PlatformFailure()}
             }
@@ -137,6 +139,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         prompt?.invalidate();prompt=nil;oauthCallback=nil;importURL=nil;keyFileURL=nil
         try fingerprint.disable()
         #if UI_TEST
+        try Data().write(to:catalog.directory(activeID).appendingPathComponent("test-key-rotated"))
         let key=Data(repeating:72,count:32)
         #else
         UserDefaults.standard.removeObject(forKey:self.bioPreference)
@@ -203,7 +206,20 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             defer { kk_free_text(answer) }
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
         }
+        if activeID == VaultCatalog.empty && ["create","createFromFile","createFromKdbx"].contains(op) {reply(["error":"Выберите имя и расположение файла"]);return}
         if let origin=args["vaultContext"] as? String, origin != activeID {reply(["error":"Выбрано другое хранилище"]);return}
+        if op=="trashList" || op=="trashRestore" {
+            do {
+                let trash=VaultTrash(catalog:catalog)
+                if op=="trashList" {reply(["value":try trash.items()])}
+                else {
+                    guard let token=args["id"] as? String else {throw PlatformFailure()}
+                    let id=try trash.restore(token)
+                    reply(["value":id])
+                }
+            } catch {reply(["error":"Не удалось восстановить базу. Проверьте Корзину и свободно ли прежнее расположение файла."])}
+            return
+        }
         if op=="vaultRename" {
             do {
                 guard let id=args["id"] as? String, let name=args["name"] as? String else {throw PlatformFailure()}
@@ -236,11 +252,11 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             do {
                 if op == "vaultNew" {
                     let first=args["initial"] as? Bool == true
-                    let suggested=first ? "Основное" : "Новое хранилище"
+                    let suggested="Новое хранилище"
                     #if UI_TEST
                     let folder=catalog.base.appendingPathComponent("Downloads")
                     try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
-                    let url=folder.appendingPathComponent((first ? suggested : "Проверка")+".kk")
+                    let url=folder.appendingPathComponent((first ? "Основное" : "Проверка")+".kk")
                     #else
                     let panel=NSSavePanel()
                     panel.title="Новое хранилище"
@@ -273,17 +289,12 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                         defer { if let lock {kk_close(lock)} }
                         var targets=[dir]
                         if file != dir.appendingPathComponent("vault.kk"), FileManager.default.fileExists(atPath:file.path){targets.insert(file,at:0)}
-                        for url in targets {
-                            #if UI_TEST
-                            try FileManager.default.moveItem(at:url,to:catalog.base.appendingPathComponent("trash-"+UUID().uuidString))
-                            #else
-                            try FileManager.default.trashItem(at:url,resultingItemURL:nil)
-                            #endif
-                        }
+                        guard let name=try catalog.items().first(where:{$0["id"]==id})?["name"] else {throw PlatformFailure()}
+                        try VaultTrash(catalog:catalog).remove(id,name:name,targets:targets)
                         if let cached=parked.removeValue(forKey:id) {kk_close(cached)}
                         if activeID==id {
                             rememberActive=false;kk_close(session);session=nil
-                            try activateVault(try catalog.items().first?["id"] ?? VaultCatalog.original)
+                            try activateVault(try catalog.items().first?["id"] ?? VaultCatalog.empty)
                         }
                     }
                 }

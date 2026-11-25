@@ -2,10 +2,12 @@ import Foundation
 
 struct VaultCatalog {
     static let original = "local-v1"
+    static let empty = "empty"
     let base: URL
     private var profiles: URL { base.appendingPathComponent("KeyKeep Vaults") }
 
     func directory(_ id: String) throws -> URL {
+        if id == Self.empty {return base.appendingPathComponent("KeyKeep Empty")}
         if id == Self.original { return base.appendingPathComponent("KeyKeep") }
         guard UUID(uuidString: id)?.uuidString == id else { throw PlatformFailure() }
         let dir = profiles.appendingPathComponent(id)

@@ -56,6 +56,7 @@ async function reset(promptOnOpen=false) {
   el('confirmDeletion').close();
   closeCatalogMenu();
   el('vaultRename').close();
+  el('recoveryDialog').close();
   el('trashQuestion').close();
   el('eraseDialog').close();
   clearDiskPreview();
@@ -69,6 +70,7 @@ async function reset(promptOnOpen=false) {
   exists=status.exists;
   if(!window.KeyKeep)await refreshCatalog();
   if(!window.KeyKeep){
+    if(!selectedVault){setDrawer(true);el('emptyCreate').focus();return;}
     if(status.open){await showEntries();return;}
     setDrawer(true);
   }
@@ -109,17 +111,13 @@ async function refreshCatalog(){
   el('revealVaultFile').title=data.file;
   el('revealVaultFile').setAttribute('aria-label','Открыть папку файла '+data.file);
   selectedVault=data.items.find(v=>v.id===data.active);
-  el('revealVaultFile').disabled=!selectedVault;
-  if(!selectedVault){
-    el('vaultPath').textContent='Выберите расположение при создании';
-    el('revealVaultFile').title='';
-    el('revealVaultFile').removeAttribute('aria-label');
-  }
-  el('activeVaultName').textContent=selectedVault?selectedVault.name:'Основное';
+  el('access').hidden=!selectedVault;
+  el('emptyCreate').hidden=Boolean(selectedVault);
+  el('vaultLocation').hidden=!selectedVault;
+  el('catalogAdd').hidden=!data.items.length;
+  el('activeVaultName').textContent=selectedVault?.name || '';
   el('workspaceTitle').textContent=el('activeVaultName').textContent;
-  const items=data.items.slice();
-  if(!selectedVault)items.unshift({id:data.active,name:'Основное'});
-  setChildren(el('catalogRows'),...items.map(v=>{
+  setChildren(el('catalogRows'),...data.items.map(v=>{
     const select=actionButton(v.name,()=>{
       if(data.active===v.id){if(!el('gate').hidden)el('pin').focus();return;}
       return changeVault('vaultSelect',{id:v.id});
@@ -172,7 +170,29 @@ async function changeVault(op,args){
   }catch(e){el('catalogMessage').textContent=e.message;}
   finally{catalogBusy=false;el('vaultCatalog').inert=!document.body.classList.contains('drawer-open');if(!el('gate').hidden)el('pin').focus();}
 }
-el('catalogAdd').onclick=()=>changeVault('vaultNew',{});
+el('catalogAdd').onclick=el('emptyCreate').onclick=()=>changeVault('vaultNew',{initial:!selectedVault});
+el('recoveryClose').onclick=()=>el('recoveryDialog').close();
+on('catalogRecover','click',async()=>{
+  const dialog=el('recoveryDialog'), message=el('recoveryMessage');
+  const items=await call('trashList');
+  message.textContent=items.length?'':'Нет хранилищ для восстановления';
+  setChildren(el('recoveryList'),...items.map(item=>{
+    const button=actionButton(item.name,async()=>{
+      button.disabled=true;
+      try{
+        const id=await call('trashRestore',{id:item.id});
+        dialog.close();
+        if(!selectedVault)await changeVault('vaultSelect',{id});
+        else await refreshCatalog();
+      }catch(error){message.textContent=error.message;}
+      finally{button.disabled=false;}
+    });
+    button.title=item.path;
+    button.setAttribute('aria-label','Восстановить «'+item.name+'»');
+    return button;
+  }));
+  dialog.showModal();
+});
 el('trashCancel').onclick=()=>el('trashQuestion').close();
 function row(label, action, selected) {
   const b = document.createElement('button'); b.textContent = label; b.title = label;
@@ -261,13 +281,7 @@ on('access','submit',async()=>{
   const pin=el('pin').value;
   if (!exists && el('repeat').value!==pin) throw new Error('PIN не совпадает');
   if(!exists && el('startupExchange').open && !el('startupDbName').textContent)throw Error('Выберите файл KDBX');
-  if(!exists && !window.KeyKeep && !selectedVault){
-    if(Array.from(pin).length<6)throw Error('Введите минимум 6 символов');
-    const chosen=await call('vaultNew',{initial:true});
-    if(chosen.cancelled)return;
-    activeVaultId=chosen.active;
-    await refreshCatalog();
-  }
+  if(!window.KeyKeep && !selectedVault)return;
   if(!exists && el('startupExchange').open){
     await call('createFromFile',{pin,password:el('startupPassword').value});
   }else{

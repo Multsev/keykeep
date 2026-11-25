@@ -103,3 +103,9 @@ dialog{max-height:85dvh}
 #catalogMenu button{display:block;width:100%;text-align:start;background:transparent;border:0;padding:.35rem .65rem}
 #catalogMenu button:is(:hover,:focus-visible){background:var(--hover)}
 #renameVaultError:empty{display:none}
+
+.catalog-tools{display:flex;gap:3px}
+#catalogRecover{background:transparent;border:0;color:var(--muted)}
+#recoveryList{display:grid;gap:.25rem}
+#recoveryList button{width:100%;text-align:left;overflow-wrap:anywhere}
+#recoveryMessage:empty{display:none}

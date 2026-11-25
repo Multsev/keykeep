@@ -7,6 +7,10 @@ const until = async (condition, step) => {
   throw Error(step);
 };
 if(!/^\d+\.\d+\.\d+/.test(el('buildVersion').textContent) || !/^\d{4}-\d{2}-\d{2}$/.test(el('buildDate').textContent))throw Error('build metadata');
+await until(()=>!el('emptyCreate').hidden && el('access').hidden,'empty vault catalog');
+if(el('catalogRows').children.length || el('workspaceTitle').textContent || !el('vaultLocation').hidden)throw Error('phantom vault');
+el('emptyCreate').click();
+await until(()=>!catalogBusy && !el('access').hidden && el('activeVaultName').textContent==='Основное','choose folder and name first');
 if(startupImport){
   await until(()=>el('startupExchange').open && el('startupDbName').textContent,'selected database');
   el('pin').value=el('repeat').value='fixture-pin';
@@ -187,4 +191,15 @@ if(checkFinder){
   await new Promise(resolve=>setTimeout(resolve,2500));
   if(el('message').textContent)throw Error('Finder action failed');
 }
-return 'PASS WKWebView: sliding drawer, independent unlocks, draft, file path, lock-all, erasure and MCP';
+el('toggleCatalog').click();
+el('catalogRows').querySelector('.vault-trash').click();
+el('trashConfirm').click();
+await until(()=>!catalogBusy && !el('emptyCreate').hidden && !el('catalogRows').children.length,'trash last vault');
+if(!el('access').hidden || !el('vaultLocation').hidden || el('workspaceTitle').textContent)throw Error('stale UI after trash');
+el('catalogRecover').click();
+await until(()=>el('recoveryDialog').open,'recovery list');
+el('recoveryList').querySelector('[aria-label="Восстановить «Основное»"]').click();
+await until(()=>!catalogBusy && el('activeVaultName').textContent==='Основное' && el('enter').textContent==='Открыть','restored vault');
+el('pin').value='after-erase';el('enter').click();
+await until(()=>!el('vault').hidden,'unlock restored file');
+return 'PASS WKWebView: empty state, create, trash last vault, recovery and PIN unlock';
