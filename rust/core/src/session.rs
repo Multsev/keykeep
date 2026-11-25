@@ -8,7 +8,14 @@ use std::{fs, os::fd::AsRawFd, path::PathBuf};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+struct DeletedEntry {
+    bytes: Zeroizing<Vec<u8>>,
+    token: String,
+    expires: std::time::Instant,
+}
+
 pub struct Session {
+    deleted_entry: Option<DeletedEntry>,
     pub(crate) mcp: Option<crate::mcp::Server>,
     cloud_job: Option<crate::yandex::Job>,
     restore_revision: Option<Vec<u8>>,
@@ -34,6 +41,7 @@ impl Session {
             return Err("Хранилище уже открыто");
         }
         Ok(Self {
+            deleted_entry: None,
             erasing: path
                 .with_extension("erasing")
                 .try_exists()
@@ -161,6 +169,13 @@ impl Session {
                 .ok_or("Некорректный запрос")
         };
         let op = arg("op")?;
+        if self
+            .deleted_entry
+            .as_ref()
+            .is_some_and(|d| d.expires <= std::time::Instant::now())
+        {
+            self.deleted_entry = None;
+        }
         if self.erasing {
             return Err("Требуется завершить удаление. Откройте приложение повторно.");
         }
@@ -175,6 +190,7 @@ impl Session {
             storage::persist(&self.path.with_extension("erasing"), b"KeyKeep erasure v1")
                 .map_err(|_| "Не удалось начать удаление")?;
             self.erasing = true;
+            self.deleted_entry = None;
             self.unlocked = None;
             self.mcp = None;
             self.restore_revision = None;
@@ -194,6 +210,7 @@ impl Session {
                 self.cloud_job = None;
                 self.restore_revision = None;
                 self.mcp = None;
+                self.deleted_entry = None;
                 self.unlocked = None;
                 return Ok(Value::Null);
             }
@@ -244,6 +261,7 @@ impl Session {
                 self.cloud_job = None;
                 self.restore_revision = None;
                 self.mcp = None;
+                self.deleted_entry = None;
                 self.unlocked = None;
                 let pin = arg("pin")?;
                 let vault = if op != "unlock" {
@@ -316,6 +334,7 @@ impl Session {
                 storage::persist(&self.path.with_extension("before-import.kk"), &backup)
                     .map_err(|_| "Не удалось сохранить снимок")?;
                 self.write(&next, pin)?;
+                self.deleted_entry = None;
                 self.unlocked.as_mut().unwrap().1 = next;
                 Ok(Value::Null)
             }
@@ -338,12 +357,12 @@ impl Session {
             }
             "list" => {
                 let folder = arg("folder")?;
-                let query = arg("query")?.to_lowercase();
+                let query = arg("query")?.trim().to_lowercase();
                 let mut rows: Vec<_> = v
                     .entries
                     .iter()
                     .filter(|e| {
-                        (folder == "root" || e.values.folder_id == folder)
+                        (!query.is_empty() || folder == "root" || e.values.folder_id == folder)
                             && (query.is_empty()
                                 || [
                                     &e.values.title,
@@ -365,7 +384,7 @@ impl Session {
                     *entry_counts.entry(&e.values.folder_id).or_insert(0usize) += 1;
                 }
                 Ok(
-                    json!({"folders":v.folders,"entryCounts":entry_counts,"entries":rows.iter().map(|e|json!({"id":e.id,"title":e.values.title,"username":e.values.username})).collect::<Vec<_>>()}),
+                    json!({"folders":v.folders,"entryCounts":entry_counts,"entries":rows.iter().map(|e|json!({"id":e.id,"title":e.values.title,"username":e.values.username,"folderId":e.values.folder_id})).collect::<Vec<_>>()}),
                 )
             }
             "get" => {
@@ -439,12 +458,47 @@ impl Session {
                     return Err("Подтвердите удаление записи");
                 }
                 let mut next = v.clone();
-                next.entries.retain(|e| e.id != id);
-                if next.entries.len() == v.entries.len() {
-                    return Err("Запись отсутствует");
-                }
+                let index = next
+                    .entries
+                    .iter()
+                    .position(|e| e.id == id)
+                    .ok_or("Запись отсутствует")?;
+                let bytes = Zeroizing::new(
+                    serde_json::to_vec(&next.entries.remove(index))
+                        .map_err(|_| "Ошибка удаления")?,
+                );
                 self.write(&next, pin)?;
                 self.unlocked.as_mut().unwrap().1 = next;
+                let token = Uuid::new_v4().to_string();
+                self.deleted_entry = Some(DeletedEntry {
+                    bytes,
+                    token: token.clone(),
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(30),
+                });
+                Ok(json!(token))
+            }
+            "undoDelete" | "forgetDelete" => {
+                let token = arg("token")?;
+                let deleted = self.deleted_entry.as_ref().filter(|d| d.token == token);
+                if op == "forgetDelete" {
+                    if deleted.is_some() {
+                        self.deleted_entry = None;
+                    }
+                    return Ok(Value::Null);
+                }
+                let entry: Entry =
+                    serde_json::from_slice(&deleted.ok_or("Время отмены истекло")?.bytes)
+                        .map_err(|_| "Ошибка восстановления")?;
+                if v.entries.iter().any(|e| e.id == entry.id)
+                    || !v.folders.iter().any(|f| f.id == entry.values.folder_id)
+                {
+                    return Err("Запись или папка уже изменена");
+                }
+                let mut next = v.clone();
+                next.entries.push(entry);
+                self.write(&next, pin)?;
+                self.unlocked.as_mut().unwrap().1 = next;
+                self.deleted_entry = None;
                 Ok(Value::Null)
             }
             "save" | "addFolder" => {
@@ -519,6 +573,7 @@ impl Session {
                     storage::persist(&self.path.with_extension("before-restore.kk"), &current)
                         .map_err(|_| "Не удалось сохранить локальный снимок")?;
                     self.write(&next, pin)?;
+                    self.deleted_entry = None;
                     self.unlocked.as_mut().unwrap().1 = next;
                     json!({"restored":true})
                 }
@@ -597,5 +652,41 @@ impl Session {
         };
         self.cloud_job = Some(job);
         Ok(Value::Null)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn undo_expires_and_cannot_cross_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path().join("vault"), [42; 32]).unwrap();
+        session
+            .call(json!({"op":"create","pin":"fixture-pin"}))
+            .unwrap();
+        for lock in [false, true] {
+            let id = session.call(json!({"op":"save","id":"","time":"2026-01-01T00:00:00Z",
+                "values":{"folderId":"root","title":"Example","username":"demo","password":"fixture-only"}})).unwrap();
+            let token = session
+                .call(json!({"op":"deleteEntry","id":id,"confirmed":true}))
+                .unwrap();
+            if lock {
+                session.call(json!({"op":"lock"})).unwrap();
+                session
+                    .call(json!({"op":"unlock","pin":"fixture-pin"}))
+                    .unwrap();
+            } else {
+                session.deleted_entry.as_mut().unwrap().expires = std::time::Instant::now();
+            }
+            assert!(
+                session
+                    .call(json!({"op":"undoDelete","token":token}))
+                    .is_err()
+            );
+            assert!(session.call(json!({"op":"get","id":id})).is_err());
+            assert!(session.deleted_entry.is_none());
+        }
     }
 }

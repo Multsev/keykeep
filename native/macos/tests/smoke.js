@@ -66,6 +66,13 @@ await until(()=>past.querySelector('button'),'history masked');
 if(past.textContent.includes('synthetic-only'))throw Error('history leaked password');
 past.querySelector('button').click();
 await until(()=>past.textContent.includes('synthetic-only'),'history reveal');
+const original=await call('get',{id:current.id});
+el('deleteEntry').click();el('acceptDelete').click();
+await until(()=>!el('undoNotice').hidden && !el('rows').children.length,'deletion');
+el('undoDelete').click();
+await until(()=>el('undoNotice').hidden && el('rows').children.length===1,'undo deletion');
+if(JSON.stringify(original)!==JSON.stringify(await call('get',{id:original.id})))throw Error('undo changed entry or history');
+
 el('settings').click();
 await until(()=>el('security').open,'settings');
 el('disk').open=true;el('diskClient').value='fixture-public-client';el('diskFolder').value='FixtureDisk';el('diskSave').click();

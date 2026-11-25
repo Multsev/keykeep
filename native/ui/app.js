@@ -8,6 +8,7 @@ function setChildren(element, ...children) {
 const keys = ['title','username','password','website','note'];
 let exists = false, folder = 'root', current = null, listing = 0;
 let requestId = 0;
+let undoToken=null, undoTimer;
 const androidReplies = new Map();
 window.keykeepReply = (id, body) => {
   const resolve = androidReplies.get(id);
@@ -46,6 +47,7 @@ function maybePromptFingerprint(){
 window.addEventListener('focus',maybePromptFingerprint);
 document.addEventListener('visibilitychange',maybePromptFingerprint);
 async function reset(promptOnOpen=false) {
+  hideUndo();
   if(window.clearMcp)window.clearMcp();
   pendingAutoUnlock=false;
   closeSettings();
@@ -78,7 +80,8 @@ function row(label, action, selected) {
 }
 async function refresh() {
   const revision = ++listing;
-  const data = await call('list',{folder,query:el('search').value});
+  const query=el('search').value.trim();
+  const data = await call('list',{folder,query});
   if (revision !== listing) return;
   el('folderActions').hidden=folder==='root';
   const tree = [];
@@ -89,14 +92,17 @@ async function refresh() {
     if(!children.has(f.parentId))children.set(f.parentId,[]);
     children.get(f.parentId).push(f);
   }
-  function append(f, depth) {
+  const paths=new Map();
+  function append(f, depth, parentPath) {
+    const path=parentPath?parentPath+' › '+f.name:f.name;
+    if(query)paths.set(f.id,path);
     options.push(new Option('　'.repeat(depth) + f.name, f.id));
     const subfolders=children.get(f.id) || [];
     const button=row('　'.repeat(depth) + f.name,async () => {folder=f.id;current=null;el('editor').hidden=true;screen('entries');await refresh();},folder===f.id);
     const count=document.createElement('small');
     count.textContent='Папок: '+subfolders.length+' · Записей: '+(data.entryCounts[f.id] || 0);
     button.append(count);tree.push(button);
-    subfolders.forEach(c=>append(c,depth+1));
+    subfolders.sort((a,b)=>a.name.localeCompare(b.name,'ru')).forEach(c=>append(c,depth+1,path));
   }
   append(data.folders.find(f=>f.id==='root'),0);
   const selectedFolder = el('entryFolder').value;
@@ -105,7 +111,7 @@ async function refresh() {
   setChildren(el('tree'), ...tree);
   setChildren(el('rows'), ...data.entries.map(e=>{
     const b=row(e.title,async()=>{edit(await call('get',{id:e.id}));await refresh();},current && current.id===e.id);
-    const sub=document.createElement('small');sub.textContent=e.username;b.append(sub);return b;
+    const sub=document.createElement('small');sub.textContent=query?[paths.get(e.folderId),e.username].filter(Boolean).join(' · '):e.username;b.append(sub);return b;
   }));
 }
 function edit(item={id:'',folderId:folder,customFields:[]}) {
@@ -258,6 +264,7 @@ for(const [id,op] of [['pickDb','pickDatabase'],['pickKey','pickKeyfile'],['clea
 on('importDb','click',async()=>{
   if(!el('confirmImport').checked)throw Error('Подтвердите замену локальных записей');
   await call('readDatabase',{password:el('dbPassword').value,confirmed:true});
+  hideUndo();
   current=null;folder='root';el('search').value='';el('editor').reset();el('editor').hidden=true;
   clearSettings();await renderFiles();await refresh();
   el('settingsMessage').textContent='База импортирована. Прежнее хранилище сохранено в зашифрованном снимке.';
@@ -303,10 +310,25 @@ on('deleteFolder','click',async()=>{
     el('folderDialog').close();current=null;folder='root';el('editor').hidden=true;screen('folders');await refresh();
   });
 });
+function hideUndo(){
+  clearTimeout(undoTimer);undoToken=null;el('undoNotice').hidden=true;
+}
+on('undoDelete','click',async()=>{
+  const token=undoToken;
+  if(!token)return;
+  await call('undoDelete',{token});
+  if(token===undoToken)hideUndo();
+  await refresh();
+});
 on('deleteEntry','click',()=>{
   const id=current.id;
   requestDeletion('Удалить запись «'+current.title+'»?', 'История этой записи также будет удалена.',async()=>{
-    await call('deleteEntry',{id,confirmed:true});
+    const token=await call('deleteEntry',{id,confirmed:true});
+    hideUndo();undoToken=token;el('undoNotice').hidden=false;
+    undoTimer=setTimeout(()=>{
+      if(undoToken!==token)return;
+      hideUndo();call('forgetDelete',{token}).catch(()=>{});
+    },30000);
     current=null;clearEntryExtras();el('editor').reset();el('editor').hidden=true;screen('entries');await refresh();
   });
 });

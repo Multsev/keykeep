@@ -69,7 +69,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       el('diskMessage').textContent='Идёт обмен с Яндекс Диском…';
       await awaitDisk();clearDiskPreview();
       if(op==='diskRestore'){
-        current=null;folder='root';el('editor').reset();clearEntryExtras();
+        hideUndo();current=null;folder='root';el('editor').reset();clearEntryExtras();
         el('editor').hidden=true;el('search').value='';await refresh();
       }
       el('diskMessage').textContent=op==='diskUpload'?'Зашифрованная база загружена':'Локальная база восстановлена';

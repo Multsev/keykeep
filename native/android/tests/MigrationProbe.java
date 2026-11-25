@@ -286,7 +286,10 @@ public final class MigrationProbe extends Instrumentation {
             waitFor("el('revisions').textContent.includes('old')");
             evaluate("window.testName='Probe '+Date.now();el('folderName').value=testName;el('newFolder').requestSubmit()");
             waitFor("Array.from(el('tree').children).some(b=>b.textContent.includes(testName))");
-            evaluate("window.testFolder=folder;el('add').click()");
+            waitFor("el('rows').textContent.includes('MigrationFixture') && el('rows').textContent.includes(' › ')");
+            evaluate("window.testFolder=folder;el('search').value='';el('search').dispatchEvent(new Event('input'))");
+            waitFor("!el('rows').children.length");
+            evaluate("el('add').click()");
             editorWithKeyboard();
             evaluate("el('title').value=testName;el('username').value='qa';el('password').value='synthetic-entry';el('editor').requestSubmit()");
             waitFor("current?.title===testName && current.id.length>0");
@@ -298,6 +301,12 @@ public final class MigrationProbe extends Instrumentation {
             waitFor("folder===testFolder && el('rows').children.length===1");
             evaluate("el('rows').firstChild.click()");
             waitFor("current?.title===testName && el('password').value==='synthetic-entry'");
+            evaluate("window.testEntryId=current.id;el('deleteEntry').click();el('acceptDelete').click()");
+            waitFor("!el('undoNotice').hidden && !el('rows').children.length");
+            evaluate("el('undoDelete').click()");
+            waitFor("el('undoNotice').hidden && el('rows').children.length===1");
+            evaluate("el('rows').firstChild.click()");
+            waitFor("current && current.id===testEntryId && el('password').value==='synthetic-entry'");
             evaluate("el('folderActions').click()");
             waitFor("el('folderDialog').open && el('editFolderName').value===testName");
             evaluate("el('editFolderName').value=testName+' updated';el('folderForm').requestSubmit()");
