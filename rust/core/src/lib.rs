@@ -8,4 +8,5 @@ mod mcp;
 mod merge;
 mod session;
 pub mod storage;
+mod trash;
 mod yandex;

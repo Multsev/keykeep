@@ -60,6 +60,7 @@ async function reset(promptOnOpen=false) {
   el('vaultRename').close();
   el('recoveryDialog').close();
   el('trashQuestion').close();
+  el('deletedItems').close();el('deletedList').replaceChildren();
   el('eraseDialog').close();
   clearDiskPreview();
   ++listing;
@@ -521,7 +522,7 @@ on('undoDelete','click',async()=>{
 });
 on('deleteEntry','click',()=>{
   const id=current.id;
-  requestDeletion('Удалить запись «'+current.title+'»?', 'История этой записи также будет удалена.',async()=>{
+  requestDeletion('Удалить запись «'+current.title+'»?', 'Запись вместе с историей переместится в корзину хранилища.',async()=>{
     const token=await call('deleteEntry',{id,confirmed:true});
     hideUndo();undoToken=token;el('undoNotice').hidden=false;
     undoTimer=setTimeout(()=>{
@@ -543,3 +544,21 @@ on('eraseForm','submit',async()=>{
   catch(error){el('eraseMessage').textContent=error.message;}
   finally{el('confirmErase').disabled=false;}
 });
+
+async function renderDeleted(){
+  const items=await call('listDeleted');
+  const list=el('deletedList');list.replaceChildren();
+  if(!items.length)list.textContent='Корзина пуста';
+  for(const item of items){
+    const line=document.createElement('div'), name=document.createElement('span');
+    name.textContent=[...item.path,item.name].join(' › ');
+    const button=actionButton('Восстановить',async()=>{
+      button.disabled=true;
+      try{await call('restoreDeleted',{id:item.id});await renderDeleted();await refresh();}
+      catch(error){button.disabled=false;line.title=error.message;el('message').textContent=error.message;}
+    });
+    line.className='field-actions';line.append(name,button);list.append(line);
+  }
+}
+on('showDeleted','click',async()=>{await renderDeleted();el('deletedItems').showModal();});
+el('closeDeleted').onclick=()=>el('deletedItems').close();

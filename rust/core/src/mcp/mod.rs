@@ -1,5 +1,6 @@
 //! MCP access is explicit, session-scoped and mediated by the unlocked vault UI.
-mod demo;
+mod catalog;
+use catalog::tools;
 mod transport;
 use crate::{
     legacy::{Entry, Vault},
@@ -54,20 +55,6 @@ fn random_token() -> Result<String> {
 fn tool_result(result: Value) -> Value {
     json!({"content":[{"type":"text","text":result.to_string()}],"structuredContent":result,"isError":false})
 }
-fn tools() -> Value {
-    let mut fields = serde_json::Map::new();
-    for key in [
-        "id", "title", "username", "password", "folderId", "website", "note",
-    ] {
-        fields.insert(key.into(), json!({"type":"string"}));
-    }
-    json!({"tools":[
-        {"name":"list_vault_structure","description":"Список папок и записей с логинами и датами изменения, без паролей.","inputSchema":{"type":"object","properties":{}}},
-        {"name":"get_password_entry","description":"Чтение выбранной записи, включая пароль, после вашего подтверждения.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
-        {"name":demo::TOOL,"description":demo::DESCRIPTION,"inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
-        {"name":"upsert_password_entry","description":"Создание или изменение записи с вашим подтверждением. Требуется разрешить запросы на запись.","inputSchema":{"type":"object","properties":fields,"required":["title","username","password"]}}
-    ]})
-}
 impl Server {
     fn poll(&mut self, v: &Vault) -> Value {
         if self
@@ -85,7 +72,7 @@ impl Server {
         match &self.approval {
             None => Value::Null,
             Some(a) => {
-                json!({"key":a.key.to_string(),"title":a.title,"previousTitle":a.original.as_ref().map(|e|&e.values.title),"action":if a.request.message["params"]["name"] == demo::TOOL {"demo"}else if !a.write{"read"}else if a.original.is_some(){"update"}else{"create"}})
+                json!({"key":a.key.to_string(),"title":a.title,"previousTitle":a.original.as_ref().map(|e|&e.values.title),"action":if !a.write{"read"}else{"operation"}})
             }
         }
     }
@@ -118,29 +105,72 @@ impl Server {
             "tools/call" if params["name"] == "list_vault_structure" => Ok(tool_result(
                 json!({"folders":v.folders,"entries":v.entries.iter().map(|e|json!({"id":e.id,"title":e.values.title,"username":e.values.username,"folderId":e.values.folder_id,"updatedAt":e.updated_at})).collect::<Vec<_>>()}),
             )),
+            "tools/call" if params["name"] == "list_trash" => {
+                Ok(tool_result(json!({"items":v.trash_list()})))
+            }
             "tools/call" => {
                 let args = &params["arguments"];
+                let name = params["name"].as_str().unwrap_or("");
                 let original = args["id"]
                     .as_str()
                     .and_then(|id| v.entries.iter().find(|e| e.id == id));
-                let demo = params["name"] == demo::TOOL;
-                let write = params["name"] == "upsert_password_entry" || demo;
-                let title = if demo {
-                    (self.writable
-                        && (args.is_null() || args.as_object().is_some_and(|a| a.is_empty())))
-                    .then_some(demo::DESCRIPTION)
-                } else if write
-                    && self.writable
-                    && ["title", "username", "password"]
-                        .iter()
-                        .all(|k| args[k].as_str().is_some_and(|s| !s.trim().is_empty()))
-                {
-                    args["title"].as_str()
-                } else if params["name"] == "get_password_entry" {
-                    original.map(|e| e.values.title.as_str())
-                } else {
-                    None
-                };
+                let write = name != "get_password_entry";
+                let catalog = tools();
+                let spec = catalog["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|t| t["name"] == name);
+                let title = spec
+                    .filter(|t| {
+                        let schema = &t["inputSchema"];
+                        (!write || self.writable)
+                            && schema["required"].as_array().unwrap().iter().all(|k| {
+                                args[k.as_str().unwrap()]
+                                    .as_str()
+                                    .is_some_and(|v| !v.trim().is_empty())
+                            })
+                            && (args.is_null()
+                                || args.as_object().is_some_and(|obj| {
+                                    obj.iter().all(|(k, v)| {
+                                        schema["properties"].get(k).is_some()
+                                            && if k == "customFields" {
+                                                v.is_array()
+                                            } else {
+                                                v.is_string()
+                                            }
+                                    })
+                                }))
+                    })
+                    .and_then(|t| {
+                        if !write {
+                            return original.map(|e| e.values.title.clone());
+                        }
+                        let target = original
+                            .map(|e| e.values.title.as_str())
+                            .or_else(|| {
+                                v.folders
+                                    .iter()
+                                    .find(|f| args["id"] == f.id)
+                                    .map(|f| f.name.as_str())
+                            })
+                            .or_else(|| {
+                                v.trash
+                                    .iter()
+                                    .find(|f| args["id"] == f.id)
+                                    .map(|f| f.name.as_str())
+                            })
+                            .unwrap_or("");
+                        Some(format!(
+                            "{} {} {}",
+                            t["description"].as_str().unwrap(),
+                            target,
+                            args["name"]
+                                .as_str()
+                                .or(args["title"].as_str())
+                                .unwrap_or("")
+                        ))
+                    });
                 if let Some(title) = title {
                     let title = title.to_owned();
                     self.approval = Some(Approval {
@@ -253,22 +283,67 @@ impl Session {
                     Err(error("Запись изменилась. Повторите запрос"))
                 } else if !a.write {
                     Ok(tool_result(json!(old)))
-                } else if server.writable && a.request.message["params"]["name"] == demo::TOOL {
-                    demo::populate(v)
-                        .and_then(|next| {
-                            self.write(&next, pin)?;
-                            Ok(next)
-                        })
-                        .map(|next| {
-                            self.unlocked.as_mut().unwrap().1 = next;
+                } else if server.writable
+                    && matches!(
+                        a.request.message["params"]["name"].as_str(),
+                        Some("create_vault" | "rename_vault" | "delete_vault")
+                    )
+                {
+                    let vault_name = args["name"].clone();
+                    let action = a.request.message["params"]["name"].clone();
+                    a.request.finish(Ok(tool_result(
+                        json!({"status":"accepted","completion":"local_application"}),
+                    )));
+                    return Ok(json!({"vaultAction":action,"name":vault_name}));
+                } else if server.writable
+                    && matches!(
+                        a.request.message["params"]["name"].as_str(),
+                        Some(
+                            "create_folder"
+                                | "update_folder"
+                                | "delete_folder"
+                                | "delete_password_entry"
+                                | "restore_trash_item"
+                        )
+                    )
+                {
+                    let id = &args["id"];
+                    let current = v.folders.iter().find(|f| id == &f.id);
+                    let cmd = match a.request.message["params"]["name"].as_str().unwrap() {
+                        "create_folder" => {
+                            json!({"op":"addFolder","name":args["name"],"parent":args["parentId"].as_str().unwrap_or("root")})
+                        }
+                        "update_folder" => {
+                            json!({"op":"editFolder","id":id,"name":args["name"].as_str().or(current.map(|f|f.name.as_str())),"parent":args["parentId"].as_str().or(current.map(|f|f.parent_id.as_str()))})
+                        }
+                        "delete_folder" => json!({"op":"deleteFolder","id":id,"confirmed":true}),
+                        "delete_password_entry" => {
+                            json!({"op":"deleteEntry","id":id,"confirmed":true})
+                        }
+                        _ => json!({"op":"restoreDeleted","id":id}),
+                    };
+                    self.call(cmd)
+                        .map(|value| {
                             changed = true;
-                            tool_result(json!({"folders":10,"subfolders":30,"entries":540}))
+                            tool_result(json!({"id":value.as_str().or(id.as_str())}))
                         })
                         .map_err(error)
                 } else if server.writable {
+                    if a.request.message["params"]["name"] == "update_password_entry"
+                        && old.is_none()
+                    {
+                        a.request.finish(Err(error("Запись отсутствует")));
+                        return Ok(json!({"changed":false}));
+                    }
                     let mut values = old.map(|e| json!(e.values)).unwrap_or_else(|| json!({}));
                     for field in [
-                        "title", "username", "password", "website", "note", "folderId",
+                        "title",
+                        "username",
+                        "password",
+                        "website",
+                        "note",
+                        "folderId",
+                        "customFields",
                     ] {
                         if let Some(val) = args.get(field) {
                             values[field] = val.clone();

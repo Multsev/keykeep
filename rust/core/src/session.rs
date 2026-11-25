@@ -9,7 +9,6 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 struct DeletedEntry {
-    bytes: Zeroizing<Vec<u8>>,
     token: String,
     expires: std::time::Instant,
 }
@@ -378,6 +377,7 @@ impl Session {
                 next.disk = v.disk.clone();
                 next.disk.upload = None;
                 next.mcp_token.clone_from(&v.mcp_token);
+                next.trash.clone_from(&v.trash);
                 self.mcp = None;
                 let backup =
                     fs::read(&self.path).map_err(|_| "Не удалось прочитать прежнюю базу")?;
@@ -480,8 +480,7 @@ impl Session {
                     if r["confirmed"] != true {
                         return Err("Подтвердите удаление папки");
                     }
-                    next.folders.retain(|f| !ids.contains(&f.id));
-                    next.entries.retain(|e| !ids.contains(&e.values.folder_id));
+                    next.trash_item(id, true)?;
                 } else {
                     let name = arg("name")?.trim();
                     let parent = arg("parent")?;
@@ -538,26 +537,24 @@ impl Session {
                 self.unlocked.as_mut().unwrap().1 = next;
                 Ok(Value::Null)
             }
+            "listDeleted" => Ok(v.trash_list()),
+            "restoreDeleted" => {
+                let mut next = v.clone();
+                next.restore_item(arg("id")?)?;
+                self.write(&next, pin)?;
+                self.unlocked.as_mut().unwrap().1 = next;
+                Ok(Value::Null)
+            }
             "deleteEntry" => {
                 let id = arg("id")?;
                 if r["confirmed"] != true {
                     return Err("Подтвердите удаление записи");
                 }
                 let mut next = v.clone();
-                let index = next
-                    .entries
-                    .iter()
-                    .position(|e| e.id == id)
-                    .ok_or("Запись отсутствует")?;
-                let bytes = Zeroizing::new(
-                    serde_json::to_vec(&next.entries.remove(index))
-                        .map_err(|_| "Ошибка удаления")?,
-                );
+                let token = next.trash_item(id, false)?;
                 self.write(&next, pin)?;
                 self.unlocked.as_mut().unwrap().1 = next;
-                let token = Uuid::new_v4().to_string();
                 self.deleted_entry = Some(DeletedEntry {
-                    bytes,
                     token: token.clone(),
                     expires: std::time::Instant::now() + std::time::Duration::from_secs(30),
                 });
@@ -572,16 +569,9 @@ impl Session {
                     }
                     return Ok(Value::Null);
                 }
-                let entry: Entry =
-                    serde_json::from_slice(&deleted.ok_or("Время отмены истекло")?.bytes)
-                        .map_err(|_| "Ошибка восстановления")?;
-                if v.entries.iter().any(|e| e.id == entry.id)
-                    || !v.folders.iter().any(|f| f.id == entry.values.folder_id)
-                {
-                    return Err("Запись или папка уже изменена");
-                }
+                deleted.ok_or("Время отмены истекло")?;
                 let mut next = v.clone();
-                next.entries.push(entry);
+                next.restore_item(token)?;
                 self.write(&next, pin)?;
                 self.unlocked.as_mut().unwrap().1 = next;
                 self.deleted_entry = None;
@@ -708,6 +698,7 @@ impl Session {
                     });
                     next.disk.upload = None;
                     next.mcp_token.clone_from(&v.mcp_token);
+                    next.trash.clone_from(&v.trash);
                     self.mcp = None;
                     storage::persist(
                         &self.state_path.with_extension("before-restore.kk"),
@@ -892,6 +883,45 @@ mod tests {
         let bytes = fs::read(&path).unwrap();
         assert!(storage::persist_new(&path, b"replacement").is_err());
         assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn trash_survives_process_restart_and_restores_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.kk");
+        let mut session = Session::new(path.clone(), [23; 32]).unwrap();
+        session
+            .call(json!({"op":"create","pin":"fixture-pin"}))
+            .unwrap();
+        let parent = session
+            .call(json!({"op":"addFolder","parent":"root","name":"Parent"}))
+            .unwrap();
+        let child = session
+            .call(json!({"op":"addFolder","parent":parent,"name":"Child"}))
+            .unwrap();
+        let id=session.call(json!({"op":"save","id":"","time":"2026-01-01T00:00:00Z","values":{"title":"Example","username":"demo","password":"test-only","folderId":child}})).unwrap();
+        session
+            .call(json!({"op":"deleteFolder","id":parent,"confirmed":true}))
+            .unwrap();
+        drop(session);
+        let mut session = Session::new(path, [23; 32]).unwrap();
+        session
+            .call(json!({"op":"unlock","pin":"fixture-pin"}))
+            .unwrap();
+        let items = session.call(json!({"op":"listDeleted"})).unwrap();
+        assert_eq!(items[0]["name"], "Parent");
+        assert!(!items.to_string().contains("test-only"));
+        session
+            .call(json!({"op":"restoreDeleted","id":items[0]["id"]}))
+            .unwrap();
+        assert_eq!(
+            session.call(json!({"op":"get","id":id})).unwrap()["folderId"],
+            child
+        );
+        assert_eq!(
+            session.call(json!({"op":"folderInfo","id":child})).unwrap()["folder"]["parentId"],
+            parent
+        );
     }
 
     #[test]

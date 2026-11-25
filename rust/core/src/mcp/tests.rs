@@ -95,49 +95,40 @@ fn loopback_approval_modes_rotation_and_lock() {
         true
     );
     assert_eq!(s.unlocked.as_ref().unwrap().1.entries[0].history.len(), 1);
-    let demo = tool(demo::TOOL, json!({}));
-    assert!(
-        pump(&mut s, port, &token, demo.clone(), Some(false))
-            .1
-            .get("error")
-            .is_some()
-    );
+    let mut invoke = |name, args| {
+        pump(&mut s, port, &token, tool(name, args), Some(true)).1["result"]["structuredContent"]
+            .clone()
+    };
+    let parent = invoke("create_folder", json!({"name":"Parent"}))["id"].clone();
+    let child = invoke("create_folder", json!({"name":"Child","parentId":parent}))["id"].clone();
+    let entry = invoke(
+        "create_password_entry",
+        json!({"title":"New","username":"demo","password":"test","folderId":child}),
+    )["id"]
+        .clone();
+    assert!(entry.is_string());
     assert_eq!(
-        pump(&mut s, port, &token, demo.clone(), Some(true)).1["result"]["structuredContent"]["entries"],
-        540
+        invoke(
+            "update_password_entry",
+            json!({"id":entry,"customFields":[{"name":"Field","value":"Value"}]})
+        )["updated"],
+        true
     );
-    assert!(
-        pump(&mut s, port, &token, demo, Some(true))
-            .1
-            .get("error")
-            .is_some()
+    let deleted = invoke("delete_password_entry", json!({"id":entry}))["id"].clone();
+    invoke("delete_folder", json!({"id":parent}));
+    invoke("restore_trash_item", json!({"id":deleted}));
+    let restored = invoke("get_password_entry", json!({"id":entry}));
+    assert_eq!(restored["folderId"], child);
+    assert_eq!(restored["customFields"][0]["value"], "Value");
+    assert_eq!(restored["history"].as_array().unwrap().len(), 1);
+    let trash = pump(&mut s, port, &token, tool("list_trash", json!({})), None).1;
+    assert_eq!(
+        trash["result"]["structuredContent"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
-    let structure = pump(&mut s, port, &token, list.clone(), None).1;
-    let data = &structure["result"]["structuredContent"];
-    let folders = data["folders"].as_array().unwrap();
-    let entries = data["entries"].as_array().unwrap();
-    let parents: Vec<_> = folders
-        .iter()
-        .filter(|f| f["name"].as_str().unwrap().starts_with("Демо · "))
-        .collect();
-    assert_eq!(parents.len(), 10);
-    for parent in parents {
-        let children: Vec<_> = folders
-            .iter()
-            .filter(|f| f["parentId"] == parent["id"])
-            .collect();
-        assert_eq!(children.len(), 3);
-        for child in children {
-            assert_eq!(
-                entries
-                    .iter()
-                    .filter(|e| e["folderId"] == child["id"])
-                    .count(),
-                18
-            );
-        }
-    }
-    assert_eq!(entries.len(), 541);
     s.call(op("mcpRotate")).unwrap();
     s.call(op("mcpStart")).unwrap();
     assert_eq!(pump(&mut s, port, &token, list, None).0, 401);
@@ -189,7 +180,7 @@ async def run():
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.list_tools()
-            assert {t.name for t in result.tools} == {"list_vault_structure","get_password_entry","upsert_password_entry","create_demo_dataset"}
+            assert {"list_vault_structure","create_folder","delete_folder","restore_trash_item","create_password_entry"} <= {t.name for t in result.tools}
             data = await session.call_tool("list_vault_structure", {})
             assert data.structuredContent["entries"] == []
 asyncio.run(run())

@@ -26,12 +26,8 @@ async function pollMcp(generation){
     else if(approvalKey!==request.key){
       approvalKey=request.key;
       const read=request.action==='read';
-      el('mcpAction').textContent=read?'Передать запись клиенту MCP?':request.action==='update'?'Изменить запись по запросу MCP?':'Создать запись по запросу MCP?';
-      el('mcpDetails').textContent=read?'Клиент получит запись «'+request.title+'», включая пароль, дополнительные поля и историю.':request.action==='update'?'Клиент обновит «'+request.previousTitle+'». Название после сохранения: «'+request.title+'».':'Клиент добавит «'+request.title+'» в хранилище.';
-      if(request.action==='demo'){
-        el('mcpAction').textContent='Создать тестовый набор?';
-        el('mcpDetails').textContent=request.title;
-      }
+      el('mcpAction').textContent=read?'Передать запись клиенту MCP?':'Разрешить изменение через MCP?';
+      el('mcpDetails').textContent=read?'Клиент получит запись «'+request.title+'», включая пароль и историю.':el('workspaceTitle').textContent+' · '+request.title;
       if(!el('mcpApproval').open)el('mcpApproval').showModal();
       el('mcpDeny').focus();
     }
@@ -110,8 +106,13 @@ el('mcpWrite').addEventListener('change',async()=>{
 });
 async function decideMcp(allow){
   if(!approvalKey)return;
+  const origin=activeVaultId;
   const result=await call('mcpDecide',{key:approvalKey,allow});
+  if(origin!==activeVaultId)return;
   closeMcpApproval();
+  if(result.vaultAction==='create_vault')await changeVault('vaultNew',{name:result.name});
+  if(result.vaultAction==='rename_vault'){await call('vaultRename',{id:activeVaultId,name:result.name});await refreshCatalog();}
+  if(result.vaultAction==='delete_vault')await changeVault('vaultTrash',{id:activeVaultId,confirmed:true});
   if(result.changed)await refresh();
 }
 on('mcpAllow','click',()=>decideMcp(true));

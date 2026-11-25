@@ -18,7 +18,7 @@ const bounds=el('generalDialog').getBoundingClientRect();
 if(Math.abs(bounds.width-innerWidth)>1 || Math.abs(bounds.height-innerHeight)>1)throw Error('settings screen size');
 el('mcpCatalog').querySelector('summary').click();
 const catalogNames=Array.from(el('toolList').querySelectorAll('code'),node=>node.textContent);
-if(!catalogNames.includes('create_demo_dataset') || catalogNames.length!==4 || !el('mcpCatalog').open)throw Error('locked tool catalog');
+if(!['create_vault','create_folder','update_password_entry','restore_trash_item'].every(n=>catalogNames.includes(n)) || !el('mcpCatalog').open)throw Error('locked tool catalog');
 el('mcpCatalog').querySelector('summary').click();
 if(el('mcpCatalog').open)throw Error('cannot collapse tool catalog');
 if(!el('mcpCopy').disabled || !el('mcpCopy').getClientRects().length)throw Error('locked copy visibility');
@@ -53,8 +53,8 @@ if(getComputedStyle(el('detail')).display!=='none' || el('entriesEmpty').hidden 
 el('searchToggle').click();if(el('search').hidden)throw Error('collapsed search');
 el('searchToggle').click();
 async function pointer(target,right){
-  await new Promise(resolve=>requestAnimationFrame(resolve));
-  await Promise.allSettled(document.getAnimations().map(animation=>animation.finished));
+  await Promise.race([new Promise(resolve=>requestAnimationFrame(resolve)),new Promise(resolve=>setTimeout(resolve,150))]);
+  await Promise.race([Promise.allSettled(document.getAnimations().map(animation=>animation.finished)),new Promise(resolve=>setTimeout(resolve,500))]);
   const rect=target.getBoundingClientRect();
   await call('testPointer',{x:rect.left+rect.width/2,y:rect.top+rect.height/2,right});
 }

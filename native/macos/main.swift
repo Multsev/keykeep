@@ -290,7 +290,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             do {
                 if op == "vaultNew" {
                     let first=args["initial"] as? Bool == true
-                    let suggested="Новое хранилище"
+                    let suggested=(args["name"] as? String).map { ($0 as NSString).lastPathComponent } ?? "Новое хранилище"
                     #if UI_TEST
                     let folder=catalog.base.appendingPathComponent("Downloads")
                     try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)

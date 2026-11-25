@@ -71,6 +71,8 @@ pub struct Entry {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Vault {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) trash: Vec<crate::trash::TrashItem>,
     #[serde(default)]
     pub(crate) disk: crate::yandex::Account,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -116,6 +118,7 @@ impl Vault {
             .map_err(|_| "Не удалось прочитать записи")?;
         let vault = Self {
             mcp_token: String::new(),
+            trash: Vec::new(),
             folders,
             entries,
             disk: Default::default(),
