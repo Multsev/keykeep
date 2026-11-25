@@ -1,0 +1,40 @@
+:root{color-scheme:light dark;font:normal 14px system-ui;background:Canvas;color:CanvasText}*{box-sizing:border-box}body{margin:0}[hidden]{display:none!important}button,input,textarea{font:inherit;padding:.4rem .55rem;border:1px solid GrayText;border-radius:5px;min-width:0}button{cursor:pointer}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid Highlight}h1{font-size:1.5rem}h2{font-size:1rem;margin:0 0 .6rem}#gate{min-height:100vh;display:grid;place-items:center}form{display:grid;gap:.6rem}#access{width:min(19rem,90vw)}label{display:grid;gap:.2rem}header{display:flex;gap:.4rem;padding:.55rem;border-bottom:1px solid GrayText}#search{flex:1}#back{display:none}.panes{display:grid;grid-template-columns:minmax(10rem,21%) minmax(13rem,32%) minmax(15rem,1fr);height:calc(100dvh - 3.4rem)}section{overflow:auto;padding:.7rem;border-inline-end:1px solid GrayText}nav{display:grid;gap:.1rem;margin-bottom:.5rem}nav button{text-align:start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;border:0}nav button[aria-current=true]{background:Highlight;color:HighlightText}nav small{display:block;overflow:hidden;text-overflow:ellipsis}textarea{min-height:4rem}#message:not(:empty){position:fixed;bottom:.7rem;left:.7rem;padding:.5rem;background:Canvas;color:CanvasText;border:1px solid GrayText;border-radius:4px}@media(max-width:660px){#back{display:block}.panes{display:block;height:auto}section{display:none;border:0}body[data-screen=folders] #folders,body[data-screen=entries] #entries,body[data-screen=detail] #detail{display:block}header{flex-wrap:wrap}#search{min-width:8rem}button,input{min-height:44px}}
+
+:root{--line:#cad0d6;--control:#f4f5f7;--field:#fff;--ink:#21262c;--muted:#55616c;--hover:#e6eaef;--accent:#2863a0;font-family:-apple-system,BlinkMacSystemFont,Roboto,sans-serif;font-size:13px;color:var(--ink)}
+@media(prefers-color-scheme:dark){:root{--line:#48494d;--control:#333437;--field:#232426;--ink:#f1f1f2;--muted:#b6b9c0;--hover:#434549;--accent:#8dbcf7}}
+button,input,textarea{appearance:none;-webkit-appearance:none;color:var(--ink);background:var(--field);border:1px solid var(--line);font-weight:400;line-height:1.35;padding:.28rem .5rem}
+button{background:var(--control);width:fit-content}
+button:hover{background:var(--hover)}
+button:disabled{color:var(--muted);cursor:default}
+header{align-items:center;border-color:var(--line)}
+section{border-color:var(--line)}
+h2,h3{font-size:1rem;font-weight:600}
+nav button{width:100%}
+nav button[aria-current=true]{background:#345475;color:white}
+dialog{color:var(--ink);background:Canvas;width:min(26rem,90vw);max-height:85vh;border:1px solid var(--line);border-radius:.65rem;padding:0}
+dialog::backdrop{background:rgba(0,0,0,.34)}
+dialog header{justify-content:space-between;padding:.7rem .9rem}
+dialog h2,dialog h3{margin:0}
+.settings-body{display:grid;gap:.8rem;padding:.9rem}
+.settings-body input{width:100%}
+.inline{display:flex;gap:.65rem;align-items:center}
+#revealed{font-family:ui-monospace,monospace;overflow-wrap:anywhere}
+.fingerprint{border-top:1px solid var(--line);padding-top:.75rem}
+.fingerprint p{margin:.4rem 0;color:var(--muted)}
+#settingsMessage:empty{display:none}
+@media(max-width:660px){button,input{min-height:44px}}
+
+#exchange{border-top:1px solid var(--line);padding-top:.65rem}
+#exchange summary{cursor:pointer;font-weight:600}
+.exchange-body{display:grid;gap:.55rem;margin-top:.65rem}
+.exchange-body span{overflow-wrap:anywhere}
+.check{display:flex;align-items:center}
+.check input[type=checkbox]{appearance:auto;width:auto;min-height:0}
+.field-line{display:flex;gap:.35rem}.field-line input{flex:1}
+.field-actions{display:flex;flex-wrap:wrap;gap:.35rem;align-items:center}
+select{min-width:0;color:var(--ink);background:var(--control);border:1px solid var(--line);border-radius:4px;font:inherit;padding:.3rem}
+#editor details{border-top:1px solid var(--line);padding-block:.45rem}
+#editor summary{cursor:pointer}#customList fieldset{min-width:0;margin:.5rem 0;display:grid;gap:.35rem;padding:.4rem;border:1px solid var(--line)}
+#revisions p{overflow-wrap:anywhere;white-space:pre-wrap}#revisions button{margin-inline-start:.45rem}
+
+.pane-heading{display:flex;align-items:baseline;justify-content:space-between;gap:.35rem;margin-bottom:.45rem}.pane-heading h2{margin:0}

@@ -1,0 +1,435 @@
+//! OAuth PKCE and manual encrypted KDBX exchange with Yandex Disk.
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::{RngCore, rngs::OsRng};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    io::Read,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use url::Url;
+use zeroize::Zeroizing;
+type Result<T> = std::result::Result<T, &'static str>;
+const CALLBACK: &str = "keykeep://oauth/callback";
+const SERVICE: &str = "Ошибка запроса к Яндекс Диску";
+const STALE: &str = "Облачная версия изменилась. Обновите сведения перед синхронизацией.";
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Account {
+    pub client: String,
+    pub folder: String,
+    pub token: String,
+    pending: Option<Pending>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct Pending {
+    state: String,
+    verifier: String,
+    created: u64,
+}
+impl Default for Account {
+    fn default() -> Self {
+        Self {
+            client: option_env!("YANDEX_OAUTH_CLIENT_ID").unwrap_or("").into(),
+            folder: "KeyKeep".into(),
+            token: String::new(),
+            pending: None,
+        }
+    }
+}
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+fn random() -> Result<String> {
+    let mut bytes = [0; 32];
+    OsRng
+        .try_fill_bytes(&mut bytes)
+        .map_err(|_| "Ошибка генератора")?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+fn component(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains(['/', '\\'])
+        && !value.chars().any(char::is_control)
+}
+impl Account {
+    pub fn configure(&mut self, client: &str, folder: &str) -> Result<()> {
+        if !component(folder) {
+            return Err("Укажите имя папки без пути");
+        }
+        if client != self.client {
+            self.token.clear();
+            self.pending = None;
+        }
+        self.client = client.trim().into();
+        self.folder = folder.trim().into();
+        Ok(())
+    }
+    pub fn authorize(&mut self) -> Result<String> {
+        if self.client.is_empty() {
+            return Err("Укажите публичный OAuth Client ID");
+        }
+        let pending = Pending {
+            state: random()?,
+            verifier: random()?,
+            created: now(),
+        };
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(pending.verifier.as_bytes()));
+        let mut url = Url::parse("https://oauth.yandex.ru/authorize").unwrap();
+        url.query_pairs_mut().extend_pairs([
+            ("response_type", "code"),
+            ("client_id", &self.client),
+            ("redirect_uri", CALLBACK),
+            ("scope", "cloud_api:disk.read cloud_api:disk.write"),
+            ("state", &pending.state),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+        ]);
+        self.pending = Some(pending);
+        Ok(url.into())
+    }
+    pub fn callback(&mut self, callback: &str) -> Result<(String, String)> {
+        let invalid = "Проверка ответа OAuth не пройдена";
+        let url = Url::parse(callback).map_err(|_| invalid)?;
+        if url.scheme() != "keykeep"
+            || url.host_str() != Some("oauth")
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.port().is_some()
+            || url.path() != "/callback"
+            || url.fragment().is_some()
+        {
+            return Err(invalid);
+        }
+        let one = |name: &str| {
+            let mut pairs = url.query_pairs().filter(|(k, _)| k == name);
+            let v = pairs.next()?.1.into_owned();
+            (pairs.next().is_none() && !v.is_empty()).then_some(v)
+        };
+        let p = self.pending.as_ref().ok_or(invalid)?;
+        if now().saturating_sub(p.created) > 600 || one("state").as_deref() != Some(&p.state) {
+            return Err(invalid);
+        }
+        let code = one("code").ok_or(invalid)?;
+        Ok((code, self.pending.take().unwrap().verifier))
+    }
+    pub fn disconnect(&mut self) {
+        self.token.clear();
+        self.pending = None;
+    }
+}
+
+pub enum Outcome {
+    Info(Value),
+    Token(Zeroizing<String>),
+    Restore(Vec<u8>, Zeroizing<String>),
+}
+pub struct Job {
+    rx: mpsc::Receiver<Result<Outcome>>,
+    cancelled: Arc<AtomicBool>,
+}
+impl Drop for Job {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+}
+impl Job {
+    pub fn start(
+        action: impl FnOnce(Client) -> Result<Outcome> + Send + 'static,
+        account: Account,
+    ) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        std::thread::spawn(move || {
+            let client = Client {
+                account,
+                api_root: "https://cloud-api.yandex.net/v1/disk/resources".into(),
+                cancelled: flag,
+                http: ureq::AgentBuilder::new()
+                    .redirects(0)
+                    .timeout(Duration::from_secs(45))
+                    .build(),
+            };
+            let _ = tx.send(action(client));
+        });
+        Self { rx, cancelled }
+    }
+    pub fn poll(&self) -> Result<Option<Outcome>> {
+        match self.rx.try_recv() {
+            Ok(result) => result.map(Some),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(_) => Err(SERVICE),
+        }
+    }
+}
+pub struct Client {
+    api_root: String,
+    account: Account,
+    http: ureq::Agent,
+    cancelled: Arc<AtomicBool>,
+}
+fn payload(r: ureq::Response) -> Result<Value> {
+    serde_json::from_reader(r.into_reader().take(4 << 20)).map_err(|_| SERVICE)
+}
+impl Client {
+    fn active(&self) -> Result<()> {
+        if self.cancelled.load(Ordering::Acquire) {
+            Err("Операция отменена")
+        } else {
+            Ok(())
+        }
+    }
+    pub fn exchange(self, code: String, verifier: String) -> Result<Outcome> {
+        self.active()?;
+        let r = self
+            .http
+            .post("https://oauth.yandex.ru/token")
+            .send_form(&[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("client_id", &self.account.client),
+                ("redirect_uri", CALLBACK),
+                ("code_verifier", &verifier),
+            ])
+            .map_err(|_| "Не удалось обменять код OAuth")?;
+        let data = payload(r)?;
+        Ok(Outcome::Token(Zeroizing::new(
+            data["access_token"]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .ok_or(SERVICE)?
+                .into(),
+        )))
+    }
+    fn api(&self, method: &str, route: &str, params: &[(&str, &str)]) -> Result<ureq::Response> {
+        self.active()?;
+        let mut req = self
+            .http
+            .request(method, &format!("{}{route}", self.api_root))
+            .set("Authorization", &format!("OAuth {}", self.account.token));
+        for (key, value) in params {
+            req = req.query(key, value);
+        }
+        match req.call() {
+            Ok(r) | Err(ureq::Error::Status(_, r)) => Ok(r),
+            Err(_) => Err(SERVICE),
+        }
+    }
+    fn dir(&self) -> String {
+        format!("disk:/{}", self.account.folder)
+    }
+    fn path(&self) -> String {
+        format!("{}/keykeep-vault.kdbx", self.dir())
+    }
+    fn info(&self, path: &str) -> Result<Value> {
+        let r = self.api("GET", "", &[("path", path)])?;
+        match r.status() {
+            404 => Ok(Value::Null),
+            200 => {
+                let v = payload(r)?;
+                let hash = v["sha256"].as_str().ok_or(SERVICE)?;
+                Ok(json!({"sha256":hash,"modified":v["modified"],"size":v["size"]}))
+            }
+            _ => Err(SERVICE),
+        }
+    }
+    pub fn inspect(self) -> Result<Outcome> {
+        let info = self.info(&self.path())?;
+        Ok(Outcome::Info(json!({"remote":info})))
+    }
+    pub fn list(self, versions: bool) -> Result<Outcome> {
+        let path = if versions {
+            format!("{}/keykeep-history", self.dir())
+        } else {
+            "disk:/".into()
+        };
+        let mut out = vec![];
+        let mut offset = 0;
+        loop {
+            let r = self.api(
+                "GET",
+                "",
+                &[
+                    ("path", &path),
+                    ("limit", "300"),
+                    ("offset", &offset.to_string()),
+                ],
+            )?;
+            if versions && r.status() == 404 {
+                break;
+            }
+            if r.status() != 200 {
+                return Err(SERVICE);
+            }
+            let v = payload(r)?;
+            let items = v["_embedded"]["items"].as_array().ok_or(SERVICE)?;
+            for f in items {
+                let Some(name) = f["name"].as_str() else {
+                    continue;
+                };
+                if component(name)
+                    && (if versions {
+                        f["type"] == "file" && name.ends_with(".kdbx")
+                    } else {
+                        f["type"] == "dir"
+                    })
+                {
+                    out.push(json!({"name":name,"modified":f["modified"]}));
+                }
+            }
+            offset += items.len();
+            if items.is_empty()
+                || offset >= v["_embedded"]["total"].as_u64().ok_or(SERVICE)? as usize
+            {
+                break;
+            }
+        }
+        Ok(Outcome::Info(json!({"items":out})))
+    }
+    fn href(&self, route: &str, path: &str, overwrite: bool) -> Result<String> {
+        let mut pairs = vec![("path", path)];
+        if route == "/upload" {
+            pairs.push(("overwrite", if overwrite { "true" } else { "false" }));
+        }
+        let r = self.api("GET", route, &pairs)?;
+        if r.status() != 200 {
+            return Err(SERVICE);
+        }
+        let v = payload(r)?;
+        let url = Url::parse(v["href"].as_str().ok_or(SERVICE)?).map_err(|_| SERVICE)?;
+        #[cfg(test)]
+        if url.host_str() == Some("127.0.0.1") && self.api_root.starts_with("http://127.0.0.1:") {
+            return Ok(url.into());
+        }
+        if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+            return Err(SERVICE);
+        }
+        Ok(url.into())
+    }
+    fn download(&self, path: &str) -> Result<Vec<u8>> {
+        let mut url = self.href("/download", path, false)?;
+        for _ in 0..5 {
+            self.active()?;
+            let response = self.http.get(&url).call().map_err(|_| SERVICE)?;
+            if (300..400).contains(&response.status()) {
+                let target = Url::parse(&url)
+                    .map_err(|_| SERVICE)?
+                    .join(response.header("Location").ok_or(SERVICE)?)
+                    .map_err(|_| SERVICE)?;
+                if target.scheme() != "https"
+                    || target.password().is_some()
+                    || !target.username().is_empty()
+                {
+                    return Err(SERVICE);
+                }
+                url = target.into();
+                continue;
+            }
+            if response.status() != 200 {
+                return Err(SERVICE);
+            }
+            let mut data = vec![];
+            response
+                .into_reader()
+                .take((64 << 20) + 1)
+                .read_to_end(&mut data)
+                .map_err(|_| SERVICE)?;
+            if data.len() > 64 << 20 {
+                return Err("Размер базы превышает 64 МБ");
+            }
+            return Ok(data);
+        }
+        Err(SERVICE)
+    }
+    fn put(&self, path: &str, data: &[u8], overwrite: bool) -> Result<()> {
+        let url = self.href("/upload", path, overwrite)?;
+        self.active()?;
+        let response = self.http.put(&url).send_bytes(data).map_err(|_| SERVICE)?;
+        if !(200..300).contains(&response.status()) {
+            return Err(SERVICE);
+        }
+        Ok(())
+    }
+    fn prepare(&self) -> Result<()> {
+        for path in [self.dir(), format!("{}/keykeep-history", self.dir())] {
+            let r = self.api("PUT", "", &[("path", &path)])?;
+            if !matches!(r.status(), 201 | 409) {
+                return Err(SERVICE);
+            }
+        }
+        Ok(())
+    }
+    fn snapshot(&self, prefix: &str, data: &[u8]) -> Result<()> {
+        let path = format!(
+            "{}/keykeep-history/{prefix}-{}-{}.kdbx",
+            self.dir(),
+            now(),
+            uuid::Uuid::new_v4()
+        );
+        self.put(&path, data, false)
+    }
+    pub fn upload(self, bytes: Vec<u8>, expected: Value) -> Result<Outcome> {
+        self.prepare()?;
+        let path = self.path();
+        let info = self.info(&path)?;
+        if info != expected {
+            return Err(STALE);
+        }
+        if !info.is_null() {
+            let old = self.download(&path)?;
+            if format!("{:x}", Sha256::digest(&old)) != info["sha256"].as_str().ok_or(SERVICE)? {
+                return Err(STALE);
+            }
+            self.snapshot("cloud-before-upload", &old)?;
+        }
+        self.snapshot("cloud", &bytes)?;
+        if self.info(&path)? != expected {
+            return Err(STALE);
+        }
+        self.put(&path, &bytes, !expected.is_null())?;
+        Ok(Outcome::Info(json!({"uploaded":true})))
+    }
+    pub fn restore(
+        self,
+        backup: Vec<u8>,
+        password: Zeroizing<String>,
+        version: String,
+        expected: Value,
+    ) -> Result<Outcome> {
+        let path = if version.is_empty() {
+            self.path()
+        } else {
+            if !component(&version) || !version.ends_with(".kdbx") {
+                return Err("Недопустимая версия");
+            }
+            format!("{}/keykeep-history/{version}", self.dir())
+        };
+        let bytes = self.download(&path)?;
+        if version.is_empty()
+            && Some(format!("{:x}", Sha256::digest(&bytes)).as_str()) != expected["sha256"].as_str()
+        {
+            return Err(STALE);
+        }
+        // Verify the downloaded database before creating any remote backup.
+        crate::kdbx::import(&bytes, &password, None)?;
+        self.prepare()?;
+        self.snapshot("local-before-restore", &backup)?;
+        Ok(Outcome::Restore(bytes, password))
+    }
+}
+
+#[cfg(test)]
+mod tests;

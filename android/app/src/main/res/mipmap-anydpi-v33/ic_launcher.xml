@@ -1,0 +1,5 @@
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/keykeep_navy"/>
+    <foreground android:drawable="@drawable/keykeep_mark"/>
+    <monochrome android:drawable="@drawable/keykeep_mark"/>
+</adaptive-icon>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0%" y1="0%" x2="85%" y2="100%" gradientUnits="objectBoundingBox">
+      <stop stop-color="#356781"/><stop offset=".55" stop-color="#23465e"/><stop offset="1" stop-color="#152e41"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop stop-color="#fff7d8"/><stop offset="1" stop-color="#ecd79e"/>
+    </linearGradient>
+  </defs>
+  <rect x="62" y="64" width="900" height="900" rx="205" fill="url(#tile)"/>
+  <rect x="66" y="68" width="892" height="892" rx="202" fill="none" stroke="#88aabd" stroke-opacity=".38" stroke-width="5"/>
+  <g transform="rotate(42 512 512)">
+    <path id="key" fill-rule="evenodd" fill="url(#metal)" d="M512 208a145 145 0 0 1 47 282v93h56v65h-56v40h56v65h-56v44h-91V490a145 145 0 0 1 44-282Zm0 78a64 64 0 1 0 0 128a64 64 0 1 0 0-128Z"/>
+  </g>
+</svg>

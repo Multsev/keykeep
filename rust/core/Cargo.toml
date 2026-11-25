@@ -1,0 +1,31 @@
+[package]
+name = "keykeep-core"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+subtle = "2"
+zeroize = "1"
+ring = "0.17"
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+keepass = { version = "0.17", features = ["save_kdbx4"] }
+chrono = "0.4"
+kpdb = { package = "rust-kpdb", version = "0.6" }
+roxmltree = "0.20"
+hex = "0.4"
+ureq = { version = "2.12", features = ["json"] }
+url = "2"
+
+[lib]
+crate-type = ["staticlib","rlib"]
+
+[dev-dependencies]
+tiny_http = "0.12"

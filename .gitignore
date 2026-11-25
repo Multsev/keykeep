@@ -60,3 +60,6 @@ app.*.map.json
 *.keystore
 *.pem
 *.p12
+
+# Rust build products
+/target/
