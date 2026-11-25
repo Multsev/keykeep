@@ -5,7 +5,7 @@ const metal=(()=>{
   const profiles={
     off:[0,0],minimal:[.35,.7],standard:[1,1],extended:[1.4,1.2]
   };
-  const time={micro:150,normal:245,complex:360,shell:430};
+  const time={micro:150,normal:245,complex:360,shell:430,launch:560};
   const viscosity='cubic-bezier(.24,.7,.2,1)', elasticity='cubic-bezier(.2,.9,.25,1.12)';
   const reflection=.18;
   let level='off';
@@ -118,9 +118,34 @@ const metal=(()=>{
       play(plate,show?[covered,parted]:[parted,covered,{...covered,opacity:0}],'micro');
     }
   }
+  function openWindow(bar){
+    const f=strength();
+    if(!f || bar.hidden)return;
+    const width=bar.clientWidth;
+    if(!width)return;
+    const reach=Math.min(width-12,width*(.48+.3*f));
+    const band=layer(bar,'metal-launch metal-launch-band');
+    band.style.width=reach+'px';
+    transient(band,[
+      {transform:'translateX(-50%) scale('+8/reach+',2.4)',opacity:.95},
+      {transform:'translateX(-50%) scale(.14,1.6)',opacity:1,offset:.22},
+      {transform:'translateX(-50%) scale(1,.8)',opacity:.9,offset:.74},
+      {transform:'translateX(-50%) scale(1,.35)',opacity:0}
+    ],'launch');
+    for(const side of [-1,1]){
+      const tip=layer(bar,'metal-launch metal-launch-tip');
+      const x=side*(reach/2-4);
+      transient(tip,[
+        {transform:'translateX(0) scale(.85,1)',opacity:.9},
+        {transform:'translateX('+x*.14+'px) scale(1.6,.76)',opacity:1,offset:.22},
+        {transform:'translateX('+x+'px) scale(.8,.76)',opacity:.88,offset:.74},
+        {transform:'translateX('+x+'px) scale(.4,.25)',opacity:0}
+      ],'launch');
+    }
+  }
   function shell(node,open){
     const r=bounds(node);if(!r?.width)return;
     rim({x:r.x,y:r.y,width:r.width,height:5},!open,'shell');
   }
-  return {apply,stop,cancel,play,bounds,find,form,birth,remove,shine,select,card,mask,shell,strength};
+  return {apply,stop,cancel,play,bounds,find,form,birth,remove,shine,select,card,mask,shell,openWindow,strength};
 })();

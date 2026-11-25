@@ -9,6 +9,21 @@ const until = async (condition, step) => {
 if(!/^\d+\.\d+\.\d+/.test(el('buildVersion').textContent) || !/^\d{4}-\d{2}-\d{2}$/.test(el('buildDate').textContent))throw Error('build metadata');
 await until(()=>!el('emptyCreate').hidden && el('access').hidden,'empty vault catalog');
 if(el('catalogRows').children.length || el('workspaceTitle').textContent || !el('vaultLocation').hidden)throw Error('phantom vault');
+{
+  await until(()=>Boolean(document.body.dataset.metal),'load launch preference');
+  const {level,firstLaunch}=await call('metalPreference',{openingWindow:true});
+  if(firstLaunch)throw Error('launch would replay after a page reload');
+  await until(()=>!document.querySelector('.metal-launch'),'finish launch');
+  metal.apply('standard');
+  el('emptyCreate').focus();
+  metal.openWindow(el('workspaceBar'));
+  const layers=[...document.querySelectorAll('.metal-launch')];
+  if(layers.length!==(metal.strength()?3:0) || layers.some(node=>getComputedStyle(node).pointerEvents!=='none'))throw Error('launch layers');
+  if(document.activeElement!==el('emptyCreate'))throw Error('launch stole keyboard focus');
+  metal.apply('off');metal.openWindow(el('workspaceBar'));
+  if(document.querySelector('.metal-launch'))throw Error('disabled launch motion');
+  metal.apply(level);
+}
 el('generalSettings').click();await until(()=>el('generalDialog').open,'general settings without vault');
 el('accountClient').value='fixture-public-client';el('accountSave').click();
 await until(()=>el('accountMessage').textContent==='Настройки сохранены','save global account');

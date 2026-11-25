@@ -35,7 +35,10 @@ function installWorkspaceTools(){
     setSearchOpen(open);
   };
   el('search').onkeydown=e=>{if(e.key==='Escape'){el('searchToggle').click();el('searchToggle').focus();}};
-  call('metalPreference').then(metal.apply).catch(()=>metal.apply('standard'));
+  call('metalPreference',{openingWindow:true}).then(({level,firstLaunch})=>{
+    metal.apply(level);
+    if(firstLaunch)metal.openWindow(el('workspaceBar'));
+  }).catch(()=>metal.apply('standard'));
   installCardTools();
   let entryDestination,contextItem;
   function openCreationMenu(e){
