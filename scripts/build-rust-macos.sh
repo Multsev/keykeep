@@ -39,5 +39,17 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 if [[ -n "$probe" ]]; then /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$app/Contents/Info.plist"; fi
-codesign --force --sign - "$app"
+signer=-
+if [[ -z "$probe" && ( -n "${KEYKEEP_MAC_SIGN_IDENTITY:-}" || "${CI:-}" != true ) ]]; then
+    signer=${KEYKEEP_MAC_SIGN_IDENTITY:-}
+    if [[ -z "$signer" ]]; then
+        signer=$(security find-identity -v -p codesigning | awk '/"Apple Development:/ {print $2}')
+    fi
+    if [[ -z "$signer" || "$signer" == *$'\n'* || "$signer" == "-" ]]; then
+        echo "Для локальной сборки выберите сертификат через KEYKEEP_MAC_SIGN_IDENTITY." >&2
+        exit 1
+    fi
+fi
+codesign --force --sign "$signer" "$app"
+codesign --verify --strict "$app"
 echo "$PWD/$app"
