@@ -128,6 +128,8 @@ fn official_client_initializes_and_lists_tools() {
     let transport = Transport::bind(0).unwrap();
     let port = transport.port();
     s.mcp = Some(Server {
+        requests: 0,
+        last_client: None,
         transport,
         writable: false,
         approval: None,

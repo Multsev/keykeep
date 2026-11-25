@@ -13,6 +13,8 @@ el('generalSettings').click();await until(()=>el('generalDialog').open,'general 
 el('accountClient').value='fixture-public-client';el('accountSave').click();
 await until(()=>el('accountMessage').textContent==='Настройки сохранены','save global account');
 el('accountConnect').click();await until(()=>el('accountMessage').textContent.includes('браузере'),'start global OAuth without vault');
+el('mcpTab').click();await until(()=>el('mcpState').textContent==='Выключен','MCP settings without vault');
+el('mcpToggle').click();await until(()=>el('mcpState').textContent==='Ожидает открытия хранилища','MCP preference while locked');
 el('generalClose').click();el('emptyCreate').click();
 await until(()=>!catalogBusy && !el('access').hidden && el('activeVaultName').textContent==='Основное','choose folder and name first');
 if(startupImport){
@@ -39,6 +41,8 @@ if(getComputedStyle(el('detail')).display!=='none' || el('entriesEmpty').hidden 
 el('searchToggle').click();if(el('search').hidden)throw Error('collapsed search');
 el('searchToggle').click();
 async function pointer(target,right){
+  await new Promise(resolve=>requestAnimationFrame(resolve));
+  await Promise.allSettled(document.getAnimations().map(animation=>animation.finished));
   const rect=target.getBoundingClientRect();
   await call('testPointer',{x:rect.left+rect.width/2,y:rect.top+rect.height/2,right});
 }
@@ -123,13 +127,12 @@ if(el('gate').hidden || !el('message').textContent)throw Error('old PIN accepted
 el('pin').value='new-test-pin';el('enter').click();
 await until(()=>!el('vault').hidden && el('rows').children.length,'unlock new PIN');
 if(getComputedStyle(el('lock')).fontWeight!=='400')throw Error('button weight');
-el('settings').click();
-await until(()=>el('security').open && el('mcpState').textContent==='Выключен','MCP default');
-el('mcpSettings').open=true;el('mcpToggle').click();
-await until(()=>!el('mcpControls').hidden,'MCP start');
+el('generalSettings').click();el('mcpTab').click();
+await until(()=>el('generalDialog').open && el('mcpState').textContent==='Запущен' && !el('mcpControls').hidden,'MCP automatically started');
 const command=await call('mcpConnection');
 const token=command.match(/KEYKEEP_MCP_TOKEN='([A-Za-z0-9_-]+)'/)[1];
 const rpc=(name,args)=>call('testMcpPost',{token,rpc:{jsonrpc:'2.0',id:11,method:'tools/call',params:{name,arguments:args}}});
+await call('testMcpPost',{token,rpc:{jsonrpc:'2.0',id:1,method:'initialize',params:{clientInfo:{name:'Codex fixture'}}}});
 const metadata=await rpc('list_vault_structure',{});
 const entry=metadata.result.structuredContent.entries[0];
 if(!entry || JSON.stringify(entry).includes('synthetic-only'))throw Error('MCP metadata');
@@ -141,7 +144,8 @@ for(const allow of [false,true]){
   if(allow?reply.result?.structuredContent?.password!=='synthetic-only':!reply.error)throw Error('MCP decision');
   await until(()=>!el('mcpApproval').open,'MCP decision closed');
 }
-el('mcpToggle').click();await until(()=>el('mcpControls').hidden,'MCP stop');el('dismiss').click();
+await until(()=>el('mcpCount').textContent==='4' && el('mcpClient').textContent==='Codex fixture','live request counter and client');
+el('mcpToggle').click();await until(()=>el('mcpControls').hidden,'MCP stop');el('generalClose').click();
 if(el('toggleCatalog').getAttribute('aria-expanded')!=='false')throw Error('drawer did not collapse');
 el('toggleCatalog').click();
 await until(()=>!el('vaultCatalog').inert && el('catalogRows').textContent.includes('Основное'),'drawer while unlocked');

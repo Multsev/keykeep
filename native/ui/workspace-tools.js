@@ -18,6 +18,9 @@ function installWorkspaceTools(){
   }
   el('macTools').append(el('searchToggle'),el('search'),el('add'),el('lock'));
   el('searchToggle').hidden=false;el('search').hidden=true;el('settings').hidden=true;
+  el('mcpPane').insertBefore(el('mcpSettings').querySelector('.exchange-body'),el('mcpFeedback'));
+  el('mcpSettings').hidden=true;
+  el('mcpCopy').textContent='Команда для Codex';
   el('securityHeading').textContent='Настройки хранилища';
   el('folderCreateBody').append(el('newFolder'));
   el('folderName').placeholder='Название папки';

@@ -138,6 +138,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   el('generalSettings').onclick=async()=>{
     if(document.querySelector('dialog[open]'))return;
     el('generalDialog').showModal();
+    el('vaultPreferences').hidden=el('vault').hidden;
+    if(!el('mcpPane').hidden){await renderMcp();return;}
     try{display(await call('accountStatus'));}catch(error){el('accountMessage').textContent=error.message;}
   };
   for(const id of ['accountSave','accountConnect','accountDisconnect']){
@@ -146,6 +148,13 @@ document.addEventListener('DOMContentLoaded',()=>{
       try{display(await call(id,{client:el('accountClient').value}));}catch(error){el('accountMessage').textContent=error.message;}
     };
   }
+  const selectPane=mcp=>{
+    el('accountPane').hidden=mcp;el('mcpPane').hidden=!mcp;
+    el('mcpTab').setAttribute('aria-current',String(mcp));
+    el('diskTab').setAttribute('aria-current',String(!mcp));
+  };
+  el('mcpTab').onclick=async()=>{selectPane(true);await renderMcp();};
+  el('diskTab').onclick=async()=>{selectPane(false);try{display(await call('accountStatus'));}catch(error){el('accountMessage').textContent=error.message;}};
   el('generalClose').onclick=()=>el('generalDialog').close();
   el('vaultPreferences').onclick=()=>{el('generalDialog').close();el('settings').click();};
 });

@@ -275,6 +275,10 @@ async function showEntries(){
     setSearchOpen(Boolean(el('search').value));
   }
   await refresh();
+  if(!window.KeyKeep){
+    try{if(await call('mcpPreference'))await call('mcpStart');await renderMcp();}
+    catch(error){el('mcpFeedback').textContent=error.message;}
+  }
   if(previous){if(previous.editor)edit(previous.editor);screen(previous.screen);}
   await window.keykeepOAuthReady();await retryOnUnlock();
 }

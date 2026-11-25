@@ -37,6 +37,14 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
     var session: UnsafeMutableRawPointer?
     var fingerprint: Fingerprint!
     var prompt: LAContext?
+    #if UI_TEST
+    var mcpEnabled=false
+    #else
+    var mcpEnabled:Bool {
+        get {UserDefaults.standard.bool(forKey:"mcpEnabled")}
+        set {UserDefaults.standard.set(newValue,forKey:"mcpEnabled")}
+    }
+    #endif
     let diskAccount=DiskAccount()
     var oauthCallback: String?
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -221,6 +229,17 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         }
         if activeID == VaultCatalog.empty && ["create","createFromFile","createFromKdbx"].contains(op) {reply(["error":"Выберите имя и расположение файла"]);return}
         if let origin=args["vaultContext"] as? String, origin != activeID {reply(["error":"Выбрано другое хранилище"]);return}
+        if op=="mcpPreference" {
+            if let enabled=args["enabled"] as? Bool {
+                let state=core(["op":"status"])["value"] as? [String:Any]
+                if state?["open"] as? Bool == true {
+                    let result=core(["op":enabled ? "mcpStart":"mcpStop"])
+                    if result["error"] != nil {reply(result);return}
+                }
+                mcpEnabled=enabled
+            }
+            reply(["value":mcpEnabled]);return
+        }
         if op=="trashList" || op=="trashRestore" {
             do {
                 let trash=VaultTrash(catalog:catalog)

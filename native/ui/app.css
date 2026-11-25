@@ -124,3 +124,15 @@ dialog{max-height:85dvh}
 .mac-vaults .panes:has(#editor[hidden]){grid-template-columns:minmax(10rem,21%) minmax(0,1fr)}
 .mac-vaults #detail:has(#editor[hidden]){display:none}
 }
+
+#generalDialog{width:min(39rem,94vw)}
+.preferences-layout{display:grid;grid-template-columns:minmax(7.5rem,30%) minmax(0,1fr);min-height:15rem}
+.preferences-layout>nav{align-content:start;padding:.5rem;margin:0;background:var(--control);border-inline-end:1px solid var(--line)}
+.preferences-layout>.settings-body{align-content:start}
+.mcp-facts{display:grid;grid-template-columns:auto 1fr;gap:.3rem .8rem;margin:0;font-size:.92rem}
+.mcp-facts dt{color:var(--muted)}
+.mcp-facts dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+#mcpFeedback:empty{display:none}
+#mcpPane #mcpState{display:flex;align-items:center;gap:.45rem}
+#mcpPane #mcpState::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--muted)}
+#mcpPane #mcpState[data-running=true]::before{background:#489563}

@@ -37,6 +37,8 @@ struct Approval {
 pub struct Server {
     transport: Transport,
     writable: bool,
+    requests: u64,
+    last_client: Option<String>,
     approval: Option<Approval>,
 }
 fn random_token() -> Result<String> {
@@ -96,7 +98,13 @@ impl Server {
             let _ = request.reply.send(None);
             return;
         }
+        self.requests = self.requests.saturating_add(1);
         let params = &msg["params"];
+        if method == Some("initialize") {
+            self.last_client = params["clientInfo"]["name"]
+                .as_str()
+                .map(|s| s.chars().filter(|c| !c.is_control()).take(64).collect());
+        }
         let result = match method.unwrap() {
             "initialize" => Ok(
                 json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"KeyKeep","version":"1.0"}}),
@@ -150,7 +158,7 @@ impl Session {
         let (pin, v) = self.unlocked.as_ref().ok_or("Хранилище заблокировано")?;
         match op {
             "mcpStatus" => Ok(
-                json!({"running":self.mcp.is_some(),"writable":self.mcp.as_ref().is_some_and(|s|s.writable)}),
+                json!({"requests":self.mcp.as_ref().map_or(0, |s|s.requests),"client":self.mcp.as_ref().and_then(|s|s.last_client.as_deref()),"running":self.mcp.is_some(),"writable":self.mcp.as_ref().is_some_and(|s|s.writable)}),
             ),
             "mcpStart" => {
                 if self.mcp.is_none() {
@@ -163,6 +171,8 @@ impl Session {
                     }
                     self.mcp = Some(Server {
                         transport,
+                        requests: 0,
+                        last_client: None,
                         writable: false,
                         approval: None,
                     });

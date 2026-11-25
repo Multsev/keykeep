@@ -16,6 +16,11 @@ async function pollMcp(generation){
   try{
     const request=await call('mcpPoll');
     if(generation!==mcpGeneration)return;
+    if(!window.KeyKeep && el('generalDialog').open && !el('mcpPane').hidden){
+      const state=await call('mcpStatus');
+      if(generation!==mcpGeneration)return;
+      showMcpActivity(state);
+    }
     if(request===false){await renderMcp();return;}
     if(!request)closeMcpApproval();
     else if(approvalKey!==request.key){
@@ -32,24 +37,47 @@ async function pollMcp(generation){
     if(mcpRunning && generation===mcpGeneration)mcpTimer=setTimeout(()=>pollMcp(generation),200);
   }
 }
+function showMcpActivity(state){
+  el('mcpCount').textContent=String(state.requests || 0);
+  el('mcpClient').textContent=state.client || 'Нет данных';
+}
+function mcpFeedback(text){
+  el(window.KeyKeep?'settingsMessage':'mcpFeedback').textContent=text;
+}
 async function renderMcp(){
-  const state=await call('mcpStatus');
-  el('mcpState').textContent=state.running?'Включён на этом устройстве':'Выключен';
-  el('mcpToggle').textContent=state.running?'Выключить MCP':'Включить MCP';
+  const locked=el('vault').hidden;
+  const state=locked?{running:false,writable:false}:await call('mcpStatus');
+  const enabled=window.KeyKeep?state.running:await call('mcpPreference');
+  el('mcpState').textContent=state.running?'Запущен':enabled?(locked?'Ожидает открытия хранилища':'Остановлен'):'Выключен';
+  el('mcpState').dataset.running=String(state.running);
+  el('mcpToggle').textContent=enabled?'Выключить MCP':'Включить MCP';
   el('mcpControls').hidden=!state.running;
   el('mcpWrite').checked=state.writable;
+  el('mcpVault').textContent=locked?'Нет открытого':el('workspaceTitle').textContent;
+  showMcpActivity(state);
   if(state.running && !mcpRunning){mcpRunning=true;pollMcp(++mcpGeneration);}
   if(!state.running)clearMcp();
 }
-on('mcpToggle','click',async()=>{await call(mcpRunning?'mcpStop':'mcpStart');await renderMcp();});
-on('mcpCopy','click',async()=>{
+el('mcpToggle').onclick=async()=>{
+  const button=el('mcpToggle');button.disabled=true;
+  try{
+    if(window.KeyKeep)await call(mcpRunning?'mcpStop':'mcpStart');
+    else await call('mcpPreference',{enabled:!await call('mcpPreference')});
+    mcpFeedback('');await renderMcp();
+  }catch(error){mcpFeedback(error.message);}
+  finally{button.disabled=false;}
+};
+function mcpAction(id,action){
+  on(id,'click',async()=>{try{await action();}catch(error){mcpFeedback(error.message);}});
+}
+mcpAction('mcpCopy',async()=>{
   await call('copyField',{text:await call('mcpConnection'),protected:true});
-  el('settingsMessage').textContent='Команда с токеном скопирована';
+  mcpFeedback('Команда с токеном скопирована');
 });
-on('mcpRotate','click',async()=>{await call('mcpRotate');await renderMcp();el('settingsMessage').textContent='Токен изменён. Включите MCP и скопируйте новую команду.';});
+mcpAction('mcpRotate',async()=>{await call('mcpRotate');if(!window.KeyKeep)await call('mcpPreference',{enabled:false});await renderMcp();mcpFeedback('Токен изменён. Включите MCP и скопируйте новую команду.');});
 el('mcpWrite').addEventListener('change',async()=>{
   try{await call('mcpMode',{enabled:el('mcpWrite').checked});}
-  catch(error){el('settingsMessage').textContent=error.message;}
+  catch(error){mcpFeedback(error.message);}
   await renderMcp();
 });
 async function decideMcp(allow){
