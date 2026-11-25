@@ -9,8 +9,8 @@
 <form id="editor" hidden>
   <label>Название<input id="title" required></label>
   <label>Папка<select id="entryFolder"></select></label>
-  <label>Логин<span class="field-line"><input id="username"><button type="button" id="copyUsername" aria-label="Скопировать логин">Копировать</button></span></label>
-  <label>Пароль<span class="field-line"><input id="password" type="password" autocomplete="off"><button type="button" id="copyPassword" aria-label="Скопировать пароль">Копировать</button></span></label>
+  <label>Логин<span class="field-line"><input id="username" required><button type="button" id="copyUsername" aria-label="Скопировать логин">Копировать</button></span></label>
+  <label>Пароль<span class="field-line"><input id="password" required type="password" autocomplete="off"><button type="button" id="copyPassword" aria-label="Скопировать пароль">Копировать</button></span></label>
   <div class="field-actions"><button id="revealPassword" type="button">Показать пароль</button><button id="generate" type="button">Сгенерировать</button></div>
   <label>Сайт<input id="website"></label><label>Заметки<textarea id="note"></textarea></label>
   <details id="custom"><summary>Дополнительные поля</summary><div id="customList"></div>

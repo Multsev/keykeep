@@ -57,6 +57,12 @@ impl Session {
         time: String,
         create_missing: bool,
     ) -> Result<String, &'static str> {
+        if values.username.trim().is_empty() {
+            return Err("Укажите логин");
+        }
+        if values.password.is_empty() {
+            return Err("Укажите пароль");
+        }
         if values.title.trim().is_empty() || !next.folders.iter().any(|f| f.id == values.folder_id)
         {
             return Err("Проверьте название и папку");
