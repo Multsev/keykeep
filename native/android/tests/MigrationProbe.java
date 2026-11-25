@@ -269,7 +269,7 @@ public final class MigrationProbe extends Instrumentation {
                 result.putString("result","PASS first import through Android system picker, cancellation, wrong password, retry, lock and reopen");
                 finish(Activity.RESULT_OK,result);return;
             }
-            waitFor("typeof el==='function' && el('enter').textContent==='Открыть' && !el('gate').hidden");
+            waitFor("typeof el==='function' && exists && !el('access').hidden && el('enter').textContent==='Открыть' && !el('gate').hidden");
             evaluate("el('pin').value='123456';el('enter').click()");
             waitFor("!el('vault').hidden && el('rows').children.length>0");
             evaluate("el('search').value='MigrationFixture';el('search').dispatchEvent(new Event('input'))");

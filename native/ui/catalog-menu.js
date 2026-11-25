@@ -1,8 +1,31 @@
 'use strict';
-function closeCatalogMenu(){
-  const menu=document.getElementById('catalogMenu');
-  if(!menu.hidden){menu.hidePopover();menu.hidden=true;}
+let activeContextMenu=null, contextTrigger=null;
+function closeCatalogMenu(restoreFocus=false){
+  if(!activeContextMenu)return;
+  activeContextMenu.hidePopover();
+  activeContextMenu.hidden=true;
+  activeContextMenu=null;
+  if(restoreFocus && contextTrigger?.isConnected)contextTrigger.focus();
+  contextTrigger=null;
 }
+function showContextMenu(menu,event){
+  closeCatalogMenu();
+  contextTrigger=event.target.closest('button') || document.activeElement;
+  activeContextMenu=menu;
+  menu.hidden=false;
+  menu.showPopover();
+  menu.style.left=Math.max(0,Math.min(event.clientX,innerWidth-menu.offsetWidth))+'px';
+  menu.style.top=Math.max(0,Math.min(event.clientY,innerHeight-menu.offsetHeight))+'px';
+  menu.querySelector('button:not([hidden])').focus();
+}
+document.addEventListener('pointerdown',e=>{
+  if(activeContextMenu && e.button===0 && !activeContextMenu.contains(e.target))closeCatalogMenu();
+},true);
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && activeContextMenu){
+    e.preventDefault();e.stopPropagation();closeCatalogMenu(true);
+  }
+},true);
 function openCatalogMenu(event,vault,trash){
   event.preventDefault();
   event.stopPropagation();
@@ -30,11 +53,7 @@ function openCatalogMenu(event,vault,trash){
     };
     dialog.showModal();input.select();
   };
-  menu.hidden=false;
-  menu.showPopover();
-  menu.style.left=Math.max(0,Math.min(event.clientX,innerWidth-menu.offsetWidth))+'px';
-  menu.style.top=Math.max(0,Math.min(event.clientY,innerHeight-menu.offsetHeight))+'px';
-  menu.querySelector('button:not([hidden])').focus();
+  showContextMenu(menu,event);
 }
 document.getElementById('vaultCatalog').oncontextmenu=e=>{
   if(!e.target.closest('button,dialog,[popover]'))openCatalogMenu(e,null,null);

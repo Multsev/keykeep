@@ -67,6 +67,7 @@ async function reset(promptOnOpen=false) {
   el('search').value = ''; el('message').textContent = '';
   setChildren(el('tree')); setChildren(el('rows')); current = null; folder = 'root';
   el('editor').hidden = true; el('vault').hidden = true; el('gate').hidden = false;
+  el('access').hidden=true;
   const status=await call('status');
   exists=status.exists;
   if(!window.KeyKeep)await refreshCatalog();
@@ -75,6 +76,7 @@ async function reset(promptOnOpen=false) {
     if(status.open){await showEntries();return;}
     setDrawer(true);
   }
+  el('access').hidden=false;
   el('repeatLabel').hidden = exists; el('startupExchange').hidden = exists;
   el('startupExchange').open=false; updateStartupAction();
   if(!exists) await refreshStartupFiles();

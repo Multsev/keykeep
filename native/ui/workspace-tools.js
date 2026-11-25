@@ -31,14 +31,10 @@ function installWorkspaceTools(){
   el('folders').oncontextmenu=e=>{
     e.preventDefault();
     folderCreateParent=e.target.closest('[data-folder]')?.dataset.folder || 'root';
-    const menu=el('folderMenu');
-    menu.hidden=false;menu.showPopover();
-    menu.style.left=Math.min(e.clientX,innerWidth-menu.offsetWidth)+'px';
-    menu.style.top=Math.min(e.clientY,innerHeight-menu.offsetHeight)+'px';
-    el('folderCreateAction').focus();
+    showContextMenu(el('folderMenu'),e);
   };
   el('folderCreateAction').onclick=()=>{
-    el('folderMenu').hidePopover();
+    closeCatalogMenu();
     el('folderName').value='';el('folderCreateDialog').showModal();el('folderName').focus();
   };
   el('folderCreateCancel').onclick=()=>el('folderCreateDialog').close();

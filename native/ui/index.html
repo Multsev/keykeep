@@ -5,7 +5,7 @@
 <aside id="vaultCatalog" aria-labelledby="catalogTitle" hidden>
 <div class="catalog-heading"><h2 id="catalogTitle">Хранилища</h2><div class="catalog-tools"><button id="catalogRecover" type="button" title="Восстановить из Корзины" aria-label="Восстановить из Корзины">↶</button><button type="button" id="catalogAdd" aria-label="Новое хранилище" title="Выбрать имя и расположение хранилища">+</button></div></div>
 <nav id="catalogRows" aria-label="Выбор хранилища"></nav>
-<div id="catalogMenu" popover role="menu" aria-label="Хранилища" hidden>
+<div id="catalogMenu" popover="manual" role="menu" aria-label="Хранилища" hidden>
 <button type="button" role="menuitem" id="menuCreate">Создать хранилище…</button>
 <button type="button" role="menuitem" id="menuRename">Переименовать…</button>
 <button type="button" role="menuitem" id="menuDelete">Удалить…</button>
@@ -15,7 +15,7 @@
 <dialog id="trashQuestion" aria-labelledby="trashText"><p id="trashText"></p><p id="trashPath"></p><div class="field-actions"><button id="trashCancel" autofocus>Отмена</button><button id="trashConfirm">В Корзину</button></div></dialog>
 <output id="catalogMessage" role="alert"></output></aside>
 <dialog id="recoveryDialog" aria-labelledby="recoveryTitle"><div class="settings-body"><header><h2 id="recoveryTitle">Восстановить из Корзины</h2><button type="button" id="recoveryClose" aria-label="Закрыть">×</button></header><div id="recoveryList"></div><output id="recoveryMessage" role="status"></output></div></dialog>
-<main id="gate"><button id="emptyCreate" type="button" hidden>＋ Создать хранилище</button><form id="access"><h1 id="activeVaultName">KeyKeep</h1><label>Мастер-PIN<input id="pin" type="password" required autocomplete="off"></label><label id="repeatLabel">Повторите PIN<input id="repeat" type="password" autocomplete="off"></label><details id="startupExchange" hidden><summary>Импортировать базу KeePass</summary><div class="exchange-body">
+<main id="gate"><button id="emptyCreate" type="button" hidden>＋ Создать хранилище</button><form id="access" hidden><h1 id="activeVaultName">KeyKeep</h1><label>Мастер-PIN<input id="pin" type="password" required autocomplete="off"></label><label id="repeatLabel">Повторите PIN<input id="repeat" type="password" autocomplete="off"></label><details id="startupExchange" hidden><summary>Импортировать базу KeePass</summary><div class="exchange-body">
 <div><button id="startupDb" type="button">Выбрать базу KDBX</button> <span id="startupDbName"></span></div>
 <div><button id="startupKey" type="button">Ключевой файл</button> <span id="startupKeyName"></span></div>
 <button id="startupClear" type="button">Сбросить выбор файлов</button>
@@ -34,7 +34,7 @@
   </details>
   <details id="history" hidden><summary>История изменений</summary><div id="revisions"></div></details>
   <div class="field-actions"><button>Сохранить</button><button type="button" id="deleteEntry">Удалить запись</button></div>
-</form></section></div></main><div id="folderMenu" popover hidden><button id="folderCreateAction">Создать папку…</button></div>
+</form></section></div></main><div id="folderMenu" popover="manual" hidden><button id="folderCreateAction">Создать папку…</button></div>
 <dialog id="folderCreateDialog" aria-labelledby="folderCreateTitle"><header><h2 id="folderCreateTitle">Новая папка</h2><button id="folderCreateCancel" aria-label="Закрыть">×</button></header><div id="folderCreateBody" class="settings-body"></div></dialog><dialog id="folderDialog" aria-labelledby="folderDialogTitle"><header><h2 id="folderDialogTitle">Изменить папку</h2><button id="closeFolder">Закрыть</button></header>
 <form id="folderForm" class="settings-body"><label>Название<input id="editFolderName" required></label><label>Родительская папка<select id="editParent"></select></label><div class="field-actions"><button>Сохранить</button><button type="button" id="deleteFolder">Удалить папку</button></div></form></dialog>
 <dialog id="confirmDeletion" aria-labelledby="deleteTitle" aria-describedby="deleteDescription"><div class="settings-body"><h2 id="deleteTitle"></h2><p id="deleteDescription"></p>

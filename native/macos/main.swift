@@ -316,6 +316,18 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             return
         }
         #if UI_TEST
+        if op == "testPointer" {
+            guard let x=args["x"] as? Double, let y=args["y"] as? Double,
+                  web.bounds.contains(NSPoint(x:x,y:y)) else {reply(["error":"Invalid test point"]);return}
+            let point=web.convert(NSPoint(x:x,y:web.isFlipped ? y : web.bounds.height-y),to:nil)
+            let right=args["right"] as? Bool == true
+            for type:NSEvent.EventType in (right ? [.rightMouseDown,.rightMouseUp] : [.leftMouseDown,.leftMouseUp]) {
+                if let event=NSEvent.mouseEvent(with:type,location:point,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,eventNumber:0,clickCount:1,pressure:1) {
+                    NSApp.postEvent(event,atStart:false)
+                }
+            }
+            reply(["value":true]);return
+        }
         if op == "testTouchPreflight" {
             reply(["value": ProcessInfo.processInfo.environment["KEYKEEP_TOUCH_PREFLIGHT"] == "1"]);return
         }

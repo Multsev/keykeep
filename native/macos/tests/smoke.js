@@ -38,8 +38,19 @@ await until(()=>!el('vault').hidden && el('tree').children.length,'create');
 if(getComputedStyle(el('detail')).display!=='none' || el('entriesEmpty').hidden || !el('search').hidden)throw Error('empty workspace layout');
 el('searchToggle').click();if(el('search').hidden)throw Error('collapsed search');
 el('searchToggle').click();
-el('folders').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:40,clientY:100,button:2}));
-el('folderCreateAction').click();if(!el('folderCreateDialog').open)throw Error('folder context action');
+async function pointer(target,right){
+  const rect=target.getBoundingClientRect();
+  await call('testPointer',{x:rect.left+rect.width/2,y:rect.top+rect.height/2,right});
+}
+async function chooseMenu(target,menu,command){
+  await pointer(target,true);
+  await until(()=>menu.matches(':popover-open'),'native secondary click opens '+menu.id);
+  await new Promise(resolve=>setTimeout(resolve,600));
+  if(!menu.matches(':popover-open'))throw Error('menu disappeared on release');
+  await pointer(command,false);
+}
+await chooseMenu(el('folders').querySelector('h2'),el('folderMenu'),el('folderCreateAction'));
+await until(()=>el('folderCreateDialog').open,'native folder action');
 el('folderName').value='Папка из меню';el('newFolder').requestSubmit();
 await until(()=>!el('folderCreateDialog').open && el('tree').textContent.includes('Папка из меню'),'created folder');
 el('tree').firstChild.click();await until(()=>folder==='root','select root');
@@ -138,7 +149,7 @@ const context=target=>target.dispatchEvent(new MouseEvent('contextmenu',{bubbles
 context(el('vaultCatalog'));
 if(el('menuCreate').hidden || !el('menuDelete').hidden)throw Error('background menu');
 el('menuCreate').click();
-await until(()=>el('activeVaultName').textContent==='Проверка' && el('enter').textContent==='Создать хранилище','new profile');
+await until(()=>!catalogBusy && el('activeVaultName').textContent==='Проверка' && el('enter').textContent==='Создать хранилище','new profile');
 const secondFile=el('vaultPath').textContent;
 if(!secondFile.endsWith('/Downloads/Проверка.kk'))throw Error('missing vault path');
 el('rememberVault').checked=true;
@@ -149,6 +160,7 @@ const choose=name=>{
   if(el('toggleCatalog').getAttribute('aria-expanded')==='false')el('toggleCatalog').click();
   Array.from(el('catalogRows').querySelectorAll('button')).find(b=>b.textContent===name).click();
 };
+await until(()=>!diskBusy && !catalogBusy,'finished active account callbacks');
 choose('Основное');
 await until(()=>!el('gate').hidden && el('activeVaultName').textContent==='Основное' && !catalogBusy,'first requires PIN');
 if(el('vaultPath').textContent===secondFile)throw Error('stale vault path');
@@ -172,9 +184,8 @@ if(!el('trashQuestion').open || el('trashPath').textContent!==secondFile)throw E
 el('trashCancel').click();
 if(el('trashQuestion').open || el('catalogRows').children.length!==2)throw Error('delete cancellation');
 const secondRow=()=>Array.from(el('catalogRows').children).find(row=>row.querySelector('button').title===secondFile);
-context(secondRow());
-if(!el('menuCreate').hidden || el('menuRename').hidden)throw Error('row menu');
-el('menuRename').click();
+await chooseMenu(secondRow().firstChild,el('catalogMenu'),el('menuRename'));
+await until(()=>el('vaultRename').open,'native rename action');
 el('vaultDisplayName').value='Рабочее';el('renameVaultForm').requestSubmit();
 await until(()=>secondRow()?.textContent==='Рабочее' && !el('vaultRename').open,'rename inactive vault');
 if(el('activeVaultName').textContent!=='Основное')throw Error('rename switched vault');

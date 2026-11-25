@@ -42,8 +42,8 @@ async function diskTask(action){
 }
 window.keykeepOAuthReady=async()=>{
   if(el('vault').hidden || diskBusy)return;
+  if(!await call('consumeOAuth'))return;
   await diskTask(async()=>{
-    if(!await call('consumeOAuth'))return;
     await awaitDisk();await renderDisk();
     el('settingsMessage').textContent=el('message').textContent='Яндекс Диск подключён';
   });
