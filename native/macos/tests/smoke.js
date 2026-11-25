@@ -11,18 +11,8 @@ await until(()=>!el('emptyCreate').hidden && el('access').hidden,'empty vault ca
 if(el('catalogRows').children.length || el('workspaceTitle').textContent || !el('vaultLocation').hidden)throw Error('phantom vault');
 {
   await until(()=>Boolean(document.body.dataset.metal),'load launch preference');
-  const {level,firstLaunch}=await call('metalPreference',{openingWindow:true});
-  if(firstLaunch)throw Error('launch would replay after a page reload');
-  await until(()=>!document.querySelector('.metal-launch'),'finish launch');
-  metal.apply('standard');
-  el('emptyCreate').focus();
-  metal.openWindow(el('workspaceBar'));
-  const layers=[...document.querySelectorAll('.metal-launch')];
-  if(layers.length!==(metal.strength()?3:0) || layers.some(node=>getComputedStyle(node).pointerEvents!=='none'))throw Error('launch layers');
-  if(document.activeElement!==el('emptyCreate'))throw Error('launch stole keyboard focus');
-  metal.apply('off');metal.openWindow(el('workspaceBar'));
-  if(document.querySelector('.metal-launch'))throw Error('disabled launch motion');
-  metal.apply(level);
+  if(document.querySelector('.metal-launch,.metal-surface'))throw Error('decorative launch layers');
+
 }
 el('generalSettings').click();await until(()=>el('generalDialog').open,'general settings without vault');
 el('accountClient').value='fixture-public-client';el('accountSave').click();
@@ -108,12 +98,10 @@ if(benchCount>0){
   for(const target of [first,id]){
     metal.find('data-entry',target).click();
     await until(()=>current?.id===target && metal.find('data-entry',target)?.getAttribute('aria-current')==='true','selected entry');
-    if(metal.strength()){
-      if(!el('rows').parentElement.querySelector('.metal-film') || !el('rows').parentElement.querySelector('.metal-bead') || !el('entryPath').querySelector('.metal-wave'))throw Error('missing selection motion');
-      if(el('editor').getAnimations().length)throw Error('moving entry fields');
+    for(const animation of el('editor').getAnimations()){
+      if(animation.effect.getKeyframes().some(frame=>frame.transform || frame.opacity==null))throw Error('card transition must only fade');
     }
   }
-  await until(()=>!document.querySelector('.metal-film,.metal-bead,.metal-wave'),'finished selection motion');
   const prefix='Все записи › Latency fixture › Child › ';
   if(el('entryPath').textContent!==prefix+'Nested')throw Error('nested entry path');
   el('title').value='Renamed';el('title').dispatchEvent(new Event('input'));
@@ -145,16 +133,14 @@ if(benchCount>0){
   }
   el('generalClose').click();
   el('revealPassword').click();
-  if(el('password').type!=='text' || el('metal-mask').textContent)throw Error('metal reveal');
+  if(el('password').type!=='text')throw Error('metal reveal');
   el('revealPassword').click();
   if(el('password').type!=='password')throw Error('instant conceal');
   const otp=appendField({name:'OTP',type:'oneTimePassword',value:'JBSWY3DPEHPK3PXP'});
   el('custom').open=true;
   otp.querySelector('.field-actions button:last-of-type').click();
   await until(()=>/^\d{6}$/.test(otp.querySelector('output').textContent),'OTP available');
-  if(metal.strength() && otp.querySelector('.metal-gauge').hidden)throw Error('missing OTP countdown');
-  metal.birth(el('title'));
-  if(Array.from(document.querySelectorAll('.metal-surface')).some(n=>n.textContent || n.children.length))throw Error('animation copied content');
+  if(!otp.querySelector('.metal-expiry').textContent)throw Error('missing OTP expiration');
   el('lock').click();
   if(!document.body.classList.contains('metal-sealed') || getComputedStyle(el('vault')).visibility!=='hidden')throw Error('delayed lock');
   await until(()=>el('vault').hidden && !el('gate').hidden && !el('access').hidden,'lock finished');

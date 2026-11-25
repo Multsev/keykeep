@@ -35,10 +35,7 @@ function installWorkspaceTools(){
     setSearchOpen(open);
   };
   el('search').onkeydown=e=>{if(e.key==='Escape'){el('searchToggle').click();el('searchToggle').focus();}};
-  call('metalPreference',{openingWindow:true}).then(({level,firstLaunch})=>{
-    metal.apply(level);
-    if(firstLaunch)metal.openWindow(el('workspaceBar'));
-  }).catch(()=>metal.apply('standard'));
+  call('metalPreference').then(metal.apply).catch(()=>metal.apply('standard'));
   installCardTools();
   let entryDestination,contextItem;
   function openCreationMenu(e){
@@ -106,10 +103,6 @@ function installCardTools(){
   };
   const passwordLine=el('password').parentElement,oldActions=el('generate').parentElement;
   passwordLine.append(el('revealPassword'),el('generate'));oldActions.remove();
-  const wrap=document.createElement('span'),mask=document.createElement('i');
-  wrap.className='metal-password';mask.id='metal-mask';mask.setAttribute('aria-hidden','true');
-  mask.append(document.createElement('i'),document.createElement('i'));
-  passwordLine.prepend(wrap);wrap.append(el('password'),mask);
   for(const [id,[title,path]] of Object.entries(icons)){
     const button=el(id);button.classList.add('card-icon');button.title=title;button.setAttribute('aria-label',title);
     button.innerHTML='<svg viewBox="0 0 20 20" aria-hidden="true">'+path+'</svg>';

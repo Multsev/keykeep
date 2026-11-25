@@ -35,7 +35,6 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
     var testRoot: URL?
     var testStarted = false
     #endif
-    private var launchMotionPending = true
     var session: UnsafeMutableRawPointer?
     var fingerprint: Fingerprint!
     var prompt: LAContext?
@@ -163,7 +162,6 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
     }
     func applicationDidHide(_ notification: Notification) { lock() }
     @objc func lock() {
-        launchMotionPending = false
         web?.isHidden = true
         forgetSessions()
         guard let session = session else { return }
@@ -246,12 +244,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             let defaults=UserDefaults.standard
             if let level=args["level"] as? String, ["off","minimal","standard","extended"].contains(level){defaults.set(level,forKey:"metalIntensity")}
             let level = defaults.string(forKey:"metalIntensity") ?? "standard"
-            if args["openingWindow"] as? Bool == true {
-                reply(["value":["level":level,"firstLaunch":launchMotionPending]])
-                launchMotionPending = false
-            } else {
-                reply(["value":level])
-            }
+            reply(["value":level])
             return
         }
         if op=="collapsedFolders" {
