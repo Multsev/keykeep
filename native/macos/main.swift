@@ -221,7 +221,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             reply(["value":NSNull()]);return
         }
         if ["vaultCatalog","vaultSelect","vaultNew","vaultTrash"].contains(op) {
-            if op != "vaultCatalog" && op != "vaultNew" {
+            if op == "vaultSelect" || (op == "vaultTrash" && args["id"] as? String == activeID) {
                 let readiness=core(["op":"suspendServices"])
                 if readiness["error"] != nil {reply(readiness);return}
             }
@@ -256,9 +256,13 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                           try catalog.items().contains(where:{$0["id"]==id}) else {throw PlatformFailure()}
                     if op == "vaultSelect" {try activateVault(id)}
                     else {
-                        guard id==activeID, args["confirmed"] as? Bool == true else {throw PlatformFailure()}
+                        guard args["confirmed"] as? Bool == true else {throw PlatformFailure()}
                         let dir=try catalog.directory(id)
                         let file=try catalog.file(id)
+                        let needsLock = id != activeID && parked[id] == nil
+                        let lock = needsLock ? kk_new_at(file.path,dir.appendingPathComponent("vault.kk").path) : nil
+                        guard !needsLock || lock != nil else {throw PlatformFailure()}
+                        defer { if let lock {kk_close(lock)} }
                         var targets=[dir]
                         if file != dir.appendingPathComponent("vault.kk"), FileManager.default.fileExists(atPath:file.path){targets.insert(file,at:0)}
                         for url in targets {
@@ -268,6 +272,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                             try FileManager.default.trashItem(at:url,resultingItemURL:nil)
                             #endif
                         }
+                        if let cached=parked.removeValue(forKey:id) {kk_close(cached)}
                         if activeID==id {
                             rememberActive=false;kk_close(session);session=nil
                             try activateVault(try catalog.items().first?["id"] ?? VaultCatalog.original)

@@ -81,8 +81,12 @@ dialog{max-height:85dvh}
 .catalog-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem}
 .catalog-heading h2{margin:0}.catalog-heading button{font-size:1.25rem;line-height:1;padding:.18rem .42rem}
 #catalogRows{gap:.2rem}#catalogRows button{padding:.4rem .5rem}
-#trashQuestion{margin:.6rem 0}
-#catalogRemove{font-size:.85rem;color:var(--muted);background:transparent;border:0}
+.vault-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px}
+#catalogRows .vault-trash{display:grid;place-items:center;width:26px;height:26px;min-height:26px;padding:0;color:var(--muted);background:transparent;border:0}
+#catalogRows .vault-trash:is(:hover,:focus-visible){color:var(--ink);background:var(--hover)}
+#trashQuestion{padding:1rem}
+#trashText{margin:0 0 .5rem}
+#trashPath{overflow-wrap:anywhere;color:var(--muted);font-size:.9rem}
 #catalogMessage{display:block;overflow-wrap:anywhere}
 @media(prefers-reduced-motion:reduce){.mac-vaults,#vaultCatalog{transition:none}}
 

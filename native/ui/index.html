@@ -4,8 +4,8 @@
 <aside id="vaultCatalog" aria-labelledby="catalogTitle" hidden>
 <div class="catalog-heading"><h2 id="catalogTitle">Хранилища</h2><button type="button" id="catalogAdd" aria-label="Новое хранилище" title="Выбрать имя и расположение хранилища">+</button></div>
 <nav id="catalogRows" aria-label="Выбор хранилища"></nav>
-<button id="catalogRemove" type="button" hidden>Удалить выбранное</button>
-<div id="trashQuestion" hidden><p id="trashText"></p><div class="field-actions"><button id="trashCancel">Отмена</button><button id="trashConfirm">В Корзину</button></div></div>
+<template id="vaultTrashButton"><button type="button" class="vault-trash"><svg aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h14M7 5.5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1.5M5 5.5l.7 10.3A1.3 1.3 0 0 0 7 17h6a1.3 1.3 0 0 0 1.3-1.2L15 5.5M8.3 8.5v5.4m3.4-5.4v5.4"/></svg></button></template>
+<dialog id="trashQuestion" aria-labelledby="trashText"><p id="trashText"></p><p id="trashPath"></p><div class="field-actions"><button id="trashCancel" autofocus>Отмена</button><button id="trashConfirm">В Корзину</button></div></dialog>
 <output id="catalogMessage" role="alert"></output></aside>
 <main id="gate"><form id="access"><h1 id="activeVaultName">KeyKeep</h1><label>Мастер-PIN<input id="pin" type="password" required autocomplete="off"></label><label id="repeatLabel">Повторите PIN<input id="repeat" type="password" autocomplete="off"></label><details id="startupExchange" hidden><summary>Импортировать базу KeePass</summary><div class="exchange-body">
 <div><button id="startupDb" type="button">Выбрать базу KDBX</button> <span id="startupDbName"></span></div>

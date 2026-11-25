@@ -54,6 +54,7 @@ async function reset(promptOnOpen=false) {
   clearEntryExtras();
   el('folderDialog').close();
   el('confirmDeletion').close();
+  el('trashQuestion').close();
   el('eraseDialog').close();
   clearDiskPreview();
   ++listing;
@@ -120,10 +121,27 @@ async function refreshCatalog(){
     });
     select.title=v.file || v.name;
     select.setAttribute('aria-current',String(data.active===v.id));
-    return select;
+    const row=document.createElement('div');
+    row.className='vault-row';
+    row.append(select);
+    if(selectedVault || v.id!==data.active){
+      const trash=el('vaultTrashButton').content.firstElementChild.cloneNode(true);
+      trash.title='Удалить хранилище «'+v.name+'»';
+      trash.setAttribute('aria-label',trash.title);
+      trash.onclick=()=>{
+        el('trashText').textContent='Переместить «'+v.name+'» в Корзину Mac?';
+        el('trashPath').textContent=v.file || data.file;
+        el('trashConfirm').onclick=()=>{
+          el('trashQuestion').close();
+          changeVault('vaultTrash',{id:v.id,confirmed:true});
+        };
+        el('trashQuestion').showModal();
+        el('trashCancel').focus();
+      };
+      row.append(trash);
+    }
+    return row;
   }));
-  el('catalogRemove').hidden=!selectedVault;
-  el('trashQuestion').hidden=true;
 }
 async function changeVault(op,args){
   if(catalogBusy)return;
@@ -137,6 +155,11 @@ async function changeVault(op,args){
     const workspace=rememberWorkspace && op!=='vaultTrash'?captureWorkspace():null;
     const switched=await call(op,args);
     if(switched.cancelled)return;
+    if(op==='vaultTrash' && args.id!==origin){
+      workspaces.delete(args.id);
+      await refreshCatalog();
+      return;
+    }
     if(workspace)workspaces.set(origin,workspace);else workspaces.delete(origin);
     activeVaultId=switched.active;
     await reset();
@@ -144,15 +167,7 @@ async function changeVault(op,args){
   finally{catalogBusy=false;el('vaultCatalog').inert=!document.body.classList.contains('drawer-open');if(!el('gate').hidden)el('pin').focus();}
 }
 el('catalogAdd').onclick=()=>changeVault('vaultNew',{});
-el('catalogRemove').onclick=()=>{
-  if(!selectedVault)return;
-  el('trashText').textContent='Переместить «'+selectedVault.name+'» со всеми записями в Корзину Mac?';
-  el('trashQuestion').hidden=false;el('trashCancel').focus();
-};
-el('trashCancel').onclick=()=>{el('trashQuestion').hidden=true;el('catalogRemove').focus();};
-el('trashConfirm').onclick=()=>{
-  if(selectedVault)changeVault('vaultTrash',{id:selectedVault.id,confirmed:true});
-};
+el('trashCancel').onclick=()=>el('trashQuestion').close();
 function row(label, action, selected) {
   const b = document.createElement('button'); b.textContent = label; b.title = label;
   b.setAttribute('aria-current',String(selected));
@@ -343,6 +358,13 @@ on('back','click',()=>screen(document.body.dataset.screen==='detail'?'entries':'
 document.addEventListener('keydown',e=>{
   if(el('vault').hidden)return;
   if(e.metaKey && ['n','f'].includes(e.key)){e.preventDefault();if(e.key==='n')edit();else el('search').focus();}
+  const catalogRow=e.target.closest('.vault-row');
+  if(catalogRow && ['ArrowUp','ArrowDown'].includes(e.key)){
+    e.preventDefault();
+    const next=e.key==='ArrowUp'?catalogRow.previousElementSibling:catalogRow.nextElementSibling;
+    next?.querySelector('button').focus();
+    return;
+  }
   const b=e.target.closest('nav button');
   if(b && ['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const next=e.key==='ArrowUp'?b.previousElementSibling:b.nextElementSibling;if(next)next.focus();}
 });
@@ -393,6 +415,7 @@ on('cancelDelete','click',()=>el('confirmDeletion').close());
 on('acceptDelete','click',async()=>{
   const operation=deletion;
   el('confirmDeletion').close();
+  el('trashQuestion').close();
   if(operation)await operation();
 });
 on('folderActions','click',async()=>{

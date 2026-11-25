@@ -18,7 +18,7 @@ struct VaultCatalog {
         let fm = FileManager.default
         var result = [[String:String]]()
         if fm.fileExists(atPath: try directory(Self.original).appendingPathComponent("vault.kk").path) {
-            result.append(["id":Self.original, "name":"Основное"])
+            result.append(["id":Self.original, "name":"Основное","file":try file(Self.original).path])
         }
         if fm.fileExists(atPath: profiles.path) {
             let dirs = try fm.contentsOfDirectory(at: profiles, includingPropertiesForKeys:nil)
