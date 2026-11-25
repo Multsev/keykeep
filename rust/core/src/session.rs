@@ -83,7 +83,8 @@ impl Session {
             }
             _ => storage::seal(v, pin, &self.device)?,
         };
-        storage::persist(&self.path, &data).map_err(|_| "Ошибка сохранения")
+        storage::persist_vault(&self.path, &self.state_path, &data, true)
+            .map_err(|_| "Ошибка сохранения")
     }
     pub(crate) fn active_pin(&self) -> Option<&str> {
         self.unlocked.as_ref().map(|(pin, _)| pin.as_str())
@@ -294,7 +295,8 @@ impl Session {
                 if verified.entries != vault.entries || verified.folders != vault.folders {
                     return Err("Ошибка проверки переноса");
                 }
-                storage::persist(&self.path, &ciphertext).map_err(|_| "Ошибка сохранения")?;
+                storage::persist_vault(&self.path, &self.state_path, &ciphertext, true)
+                    .map_err(|_| "Ошибка сохранения")?;
                 self.attempts.clear()?;
                 self.unlocked = Some((Zeroizing::new(pin.to_owned()), verified));
                 return Ok(Value::Null);
@@ -326,8 +328,13 @@ impl Session {
                     } else {
                         Vault::from_android(None, None)?
                     };
-                    storage::persist_new(&self.path, &storage::seal(&v, pin, &self.device)?)
-                        .map_err(|_| "Не удалось создать файл. Проверьте имя и доступ к папке")?;
+                    storage::persist_vault(
+                        &self.path,
+                        &self.state_path,
+                        &storage::seal(&v, pin, &self.device)?,
+                        false,
+                    )
+                    .map_err(|_| "Не удалось создать файл. Проверьте имя и доступ к папке")?;
                     if self.path != self.state_path {
                         storage::persist(&self.state_path.with_extension("created"), b"1")
                             .map_err(|_| "Ошибка сохранения расположения")?;

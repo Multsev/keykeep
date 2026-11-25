@@ -113,17 +113,56 @@ pub fn open(bytes: &[u8], pin: &str, device: &[u8; 32]) -> Result<Vault, &'stati
 
 /// Callers serialize writes and only publish their in-memory revision after success.
 pub fn persist(path: &Path, ciphertext: &[u8]) -> std::io::Result<()> {
-    persist_file(path, ciphertext, true)
+    persist_file(path, ciphertext, true, None)
 }
 
+#[cfg(test)]
 pub fn persist_new(path: &Path, ciphertext: &[u8]) -> std::io::Result<()> {
-    persist_file(path, ciphertext, false)
+    persist_file(path, ciphertext, false, None)
 }
 
-fn persist_file(path: &Path, ciphertext: &[u8], replace: bool) -> std::io::Result<()> {
+pub(crate) fn persist_vault(
+    path: &Path,
+    state: &Path,
+    data: &[u8],
+    replace: bool,
+) -> std::io::Result<()> {
+    persist_file(
+        path,
+        data,
+        replace,
+        state
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|s| s.to_str()),
+    )
+}
+
+fn persist_file(
+    path: &Path,
+    ciphertext: &[u8],
+    replace: bool,
+    _profile: Option<&str>,
+) -> std::io::Result<()> {
     let dir = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(ciphertext)?;
+    #[cfg(target_os = "macos")]
+    if let Some(id) = _profile.filter(|s| *s == "KeyKeep" || uuid::Uuid::parse_str(s).is_ok()) {
+        use std::os::fd::AsRawFd;
+        let id = if id == "KeyKeep" { "local-v1" } else { id };
+        // Optional public Keychain account locator. Some volumes omit extended attributes.
+        unsafe {
+            libc::fsetxattr(
+                tmp.as_raw_fd(),
+                c"com.max.keykeep.profile".as_ptr(),
+                id.as_ptr().cast(),
+                id.len(),
+                0,
+                0,
+            )
+        };
+    }
     tmp.as_file().sync_all()?;
     if replace {
         tmp.persist(path)?;

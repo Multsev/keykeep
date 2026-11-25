@@ -61,13 +61,20 @@ struct VaultCatalog {
               (try? FileManager.default.destinationOfSymbolicLink(atPath:file.path)) == nil,
               try !items().contains(where:{try self.file($0["id"]!).standardizedFileURL == file.standardizedFileURL})
         else {throw PlatformFailure()}
+        return try register(file, title:title)
+    }
+
+    func register(_ file:URL, title:String) throws -> String {
         guard !title.isEmpty, title.rangeOfCharacter(from:.controlCharacters) == nil
         else { throw PlatformFailure() }
         let id = UUID().uuidString
         let dir = profiles.appendingPathComponent(id)
         try FileManager.default.createDirectory(at:dir, withIntermediateDirectories:true, attributes:[.posixPermissions:0o700])
+        var complete=false
+        defer {if !complete {try? FileManager.default.removeItem(at:dir)}}
         try file.path.write(to:dir.appendingPathComponent("location"),atomically:true,encoding:.utf8)
         try title.write(to:dir.appendingPathComponent("name"), atomically:true, encoding:.utf8)
+        complete=true
         return id
     }
 }

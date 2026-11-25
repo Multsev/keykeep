@@ -10,7 +10,7 @@ async function until(condition, step) {
   throw Error('Истекло время проверки: ' + step);
 }
 await until(()=>!el('emptyCreate').hidden,'пустой список');
-el('emptyCreate').click();
+el('emptyCreate').click();el('createBlank').click();
 await until(()=>!catalogBusy && !el('access').hidden,'старт');
 if (!(await call('bioStatus')).available) throw Error('Touch ID недоступен');
 if (await call('testTouchPreflight')) return 'Touch ID: отдельное тестовое хранилище готово, датчик доступен';

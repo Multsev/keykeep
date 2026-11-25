@@ -195,3 +195,5 @@ dialog{max-height:85dvh}
 #entryPath{margin:0;color:var(--muted);font-size:.85rem;line-height:1.35;overflow-wrap:anywhere;user-select:text}
 
 .context-target{outline:1px solid var(--accent);outline-offset:-1px;border-radius:4px}
+
+.mac-vaults #startupExchange :is(summary,#startupDb,#startupClear){display:none}

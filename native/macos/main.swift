@@ -112,6 +112,60 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
     var activeID = VaultCatalog.original
     var bioPreference:String { activeID == VaultCatalog.original ? "bioAutoPrompt" : "bioAutoPrompt."+activeID }
 
+    private func attachVault(_ input:URL, beforeSwitch:() throws -> Void) throws {
+        let file=input.resolvingSymlinksInPath().standardizedFileURL
+        guard try file.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile == true else {throw PlatformFailure()}
+        let items=try catalog.items()
+        if let existing=items.first(where:{URL(fileURLWithPath:$0["file"]!).resolvingSymlinksInPath().standardizedFileURL == file}) {
+            try beforeSwitch()
+            try activateVault(existing["id"]!)
+            return
+        }
+        let handle=try FileHandle(forReadingFrom:file)
+        defer {try? handle.close()}
+        guard try handle.read(upToCount:4)==Data("KK01".utf8), try handle.seekToEnd()>=48 else {
+            throw NSError(domain:"KeyKeep.Add",code:1,userInfo:[NSLocalizedDescriptionKey:"Файл не является хранилищем KeyKeep."])
+        }
+        var bytes=[UInt8](repeating:0,count:64)
+        let length=getxattr(file.path,"com.max.keykeep.profile",&bytes,bytes.count,0,0)
+        let tag=length>0 ? String(bytes:bytes.prefix(length),encoding:.utf8) : nil
+        // Old snapshots have no locator. An exact local copy identifies the same device key.
+        let account:String?
+        if let tag, tag == VaultCatalog.original || UUID(uuidString:tag)?.uuidString == tag {account=tag}
+        else {account=items.first(where:{FileManager.default.contentsEqual(atPath:$0["file"]!,andPath:file.path)})?["id"]}
+        let missingKey=NSError(domain:"KeyKeep.Add",code:2,userInfo:[NSLocalizedDescriptionKey:"Не удалось найти ключ этого файла на Mac. На исходном устройстве экспортируйте хранилище в KeePass (.kdbx)."])
+        guard let account else {throw missingKey}
+        #if !UI_TEST
+        var query=deviceKeyQuery(account)
+        query[kSecReturnData as String]=true
+        var value:CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary,&value)==errSecSuccess, let key=value as? Data,key.count==32 else {throw missingKey}
+        #endif
+        let id=try catalog.register(file,title:file.deletingPathExtension().lastPathComponent)
+        do {
+            let dir=try catalog.directory(id)
+            try Data("1".utf8).write(to:dir.appendingPathComponent("vault.created"),options:.atomic)
+            #if !UI_TEST
+            var item=deviceKeyQuery(id)
+            item[kSecValueData as String]=key
+            item[kSecAttrAccessible as String]=kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            guard SecItemAdd(item as CFDictionary,nil)==errSecSuccess else {throw PlatformFailure()}
+            #else
+            if let source=try? catalog.directory(account),FileManager.default.fileExists(atPath:source.appendingPathComponent("test-key-rotated").path){
+                try Data().write(to:dir.appendingPathComponent("test-key-rotated"))
+            }
+            #endif
+            try beforeSwitch()
+            try activateVault(id)
+        } catch {
+            if let dir=try? catalog.directory(id){try? FileManager.default.removeItem(at:dir)}
+            #if !UI_TEST
+            SecItemDelete(deviceKeyQuery(id) as CFDictionary)
+            #endif
+            throw error
+        }
+    }
+
     private func activateVault(_ id:String) throws {
         if session != nil && activeID == id {return}
         let dir = try catalog.directory(id)
@@ -177,7 +231,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         testStarted = true
         do {
             let test = try String(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("smoke.js"))
-            webView.callAsyncJavaScript(test, arguments: ["benchCount":Int(ProcessInfo.processInfo.environment["KEYKEEP_MCP_BENCH_COUNT"] ?? "") ?? 0,"startupImport":importURL != nil,"checkFinder":ProcessInfo.processInfo.environment["KEYKEEP_TEST_FINDER"] == "1"], in: nil, in: .page) { result in
+            webView.callAsyncJavaScript(test, arguments: ["benchCount":Int(ProcessInfo.processInfo.environment["KEYKEEP_MCP_BENCH_COUNT"] ?? "") ?? 0,"testAddFile":ProcessInfo.processInfo.environment["KEYKEEP_TEST_ADD_KK"] == "1","startupImport":importURL != nil,"checkFinder":ProcessInfo.processInfo.environment["KEYKEEP_TEST_FINDER"] == "1"], in: nil, in: .page) { result in
                 if let root = self.testRoot { try? FileManager.default.removeItem(at: root) }
                 switch result {
                 case .success(let value):
@@ -299,22 +353,51 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             rememberActive=state?["open"] as? Bool == true && args["enabled"] as? Bool == true
             reply(["value":NSNull()]);return
         }
-        if ["vaultCatalog","vaultSelect","vaultNew","vaultTrash"].contains(op) {
+        if ["vaultCatalog","vaultSelect","vaultNew","vaultAddFile","vaultTrash"].contains(op) {
             if op == "vaultSelect" || (op == "vaultTrash" && args["id"] as? String == activeID) {
                 let readiness=core(["op":"suspendServices"])
                 if readiness["error"] != nil {reply(readiness);return}
             }
             do {
-                if op == "vaultNew" {
-                    let first=args["initial"] as? Bool == true
-                    let suggested=(args["name"] as? String).map { ($0 as NSString).lastPathComponent } ?? "Новое хранилище"
+                var source:URL?
+                if op == "vaultAddFile" {
                     #if UI_TEST
+                    if let path=ProcessInfo.processInfo.environment["KEYKEEP_TEST_KDBX"] { source=URL(fileURLWithPath:path) }
+                    else {
+                        let copy=catalog.base.appendingPathComponent("Копия.kk")
+                        if !FileManager.default.fileExists(atPath:copy.path){try FileManager.default.copyItem(at:catalog.file(activeID),to:copy)}
+                        source=copy
+                    }
+                    #else
+                    let picker=NSOpenPanel()
+                    picker.title="Добавить хранилище"
+                    picker.prompt="Добавить"
+                    picker.canChooseDirectories=false
+                    picker.allowedContentTypes=["kk","kdbx"].compactMap{UTType(filenameExtension:$0)}
+                    guard picker.runModal() == .OK,let selected=picker.url else {reply(["value":["cancelled":true]]);return}
+                    source=selected
+                    #endif
+                }
+                if let file=source,file.pathExtension.lowercased()=="kk" {
+                    let current=try catalog.file(activeID).resolvingSymlinksInPath().standardizedFileURL
+                    if file.resolvingSymlinksInPath().standardizedFileURL==current {
+                        reply(["value":["cancelled":true]]);return
+                    }
+                    try attachVault(file) {
+                        if let message=core(["op":"suspendServices"])["error"] as? String {
+                            throw NSError(domain:"KeyKeep.Add",code:3,userInfo:[NSLocalizedDescriptionKey:message])
+                        }
+                    }
+                } else if op == "vaultNew" || op == "vaultAddFile" {
+                    let suggested=source?.deletingPathExtension().lastPathComponent ?? (args["name"] as? String).map { ($0 as NSString).lastPathComponent } ?? "Новое хранилище"
+                    #if UI_TEST
+                    let first=args["initial"] as? Bool == true
                     let folder=catalog.base.appendingPathComponent("Downloads")
                     try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
                     let url=folder.appendingPathComponent((first ? "Основное" : "Проверка")+".kk")
                     #else
                     let panel=NSSavePanel()
-                    panel.title="Новое хранилище"
+                    panel.title=source == nil ? "Новое хранилище" : "Сохранить импортированное хранилище KeyKeep"
                     panel.prompt="Выбрать"
                     panel.nameFieldStringValue=suggested+".kk"
                     panel.allowedContentTypes=[UTType(filenameExtension:"kk") ?? .data]
@@ -326,10 +409,12 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                     guard !FileManager.default.fileExists(atPath:url.path) else {reply(["error":"Файл уже существует. Выберите другое имя."]);return}
                     let readiness=core(["op":"suspendServices"])
                     if readiness["error"] != nil {reply(readiness);return}
-                    let oldImport=importURL, oldKey=keyFileURL
                     let id=try catalog.create(at:url)
-                    try activateVault(id)
-                    if first {importURL=oldImport;keyFileURL=oldKey}
+                    do {try activateVault(id)} catch {
+                        if let dir=try? catalog.directory(id){try? FileManager.default.removeItem(at:dir)}
+                        throw error
+                    }
+                    importURL=source;keyFileURL=nil
                 } else if op != "vaultCatalog" {
                     guard let id=args["id"] as? String,
                           try catalog.items().contains(where:{$0["id"]==id}) else {throw PlatformFailure()}
@@ -354,6 +439,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                     }
                 }
                 reply(["value":["items":try catalog.items(),"active":activeID,"remembered":rememberActive,"file":try catalog.file(activeID).path]])
+            } catch let error as NSError where error.domain=="KeyKeep.Add" {reply(["error":error.localizedDescription])
             } catch {reply(["error":op=="vaultNew" ? "Выберите свободное имя файла и доступную для записи папку" : "Не удалось открыть или переместить хранилище. Проверьте доступ и закройте другие окна KeyKeep."])}
             return
         }

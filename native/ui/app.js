@@ -58,7 +58,7 @@ async function reset(promptOnOpen=false) {
   el('folderDialog').close();
   el('confirmDeletion').close();
   closeCatalogMenu();
-  el('vaultRename').close();
+  el('vaultAddChoice').close();el('vaultRename').close();
   el('recoveryDialog').close();
   el('trashQuestion').close();
   selectTrash(false);
@@ -179,7 +179,14 @@ async function changeVault(op,args){
   }catch(e){el('catalogMessage').textContent=e.message;}
   finally{catalogBusy=false;el('vaultCatalog').inert=!document.body.classList.contains('drawer-open');if(!el('gate').hidden)el('pin').focus();}
 }
-el('catalogAdd').onclick=el('emptyCreate').onclick=()=>changeVault('vaultNew',{initial:!selectedVault});
+const addChoice=el('vaultAddChoice');
+el('catalogAdd').onclick=el('emptyCreate').onclick=()=>{
+  addChoice.returnValue='';addChoice.showModal();
+};
+addChoice.addEventListener('close',()=>{
+  const action=addChoice.returnValue;addChoice.returnValue='';
+  if(action==='new' || action==='file')changeVault(action==='new'?'vaultNew':'vaultAddFile',{initial:!selectedVault});
+});
 el('recoveryClose').onclick=()=>el('recoveryDialog').close();
 on('catalogRecover','click',async()=>{
   const dialog=el('recoveryDialog'), message=el('recoveryMessage');
@@ -301,7 +308,10 @@ async function refreshStartupFiles(){
   const files=await call('fileStatus');
   el('startupDbName').textContent=files.database;
   el('startupKeyName').textContent=files.keyfile;
-  if(files.database || files.keyfile)el('startupExchange').open=true;
+  if(!window.KeyKeep){
+    el('startupExchange').hidden=!files.database;
+    el('startupExchange').open=Boolean(files.database);
+  }else if(files.database || files.keyfile)el('startupExchange').open=true;
   updateStartupAction();
 }
 el('startupExchange').addEventListener('toggle',updateStartupAction);

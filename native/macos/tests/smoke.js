@@ -28,7 +28,7 @@ el('mcpCatalog').querySelector('summary').click();
 if(el('mcpCatalog').open)throw Error('cannot collapse tool catalog');
 if(!el('mcpCopy').disabled || !el('mcpCopy').getClientRects().length)throw Error('locked copy visibility');
 el('mcpToggle').click();await until(()=>el('mcpState').textContent==='Ожидает открытия хранилища','MCP preference while locked');
-el('generalClose').click();el('emptyCreate').click();
+el('generalClose').click();el('emptyCreate').click();el(startupImport?'addFromFile':'createBlank').click();
 await until(()=>!catalogBusy && !el('access').hidden && el('activeVaultName').textContent==='Основное','choose folder and name first');
 if(startupImport){
   await until(()=>el('startupExchange').open && el('startupDbName').textContent,'selected database');
@@ -54,6 +54,18 @@ for(const [value,weak] of [['',false],['7',true],['12345',true],['123456',false]
 el('pin').value=el('repeat').value='7';
 el('enter').click();
 await until(()=>!el('vault').hidden && el('tree').children.length,'create');
+if(testAddFile){
+  const id=await call('save',{id:'',values:{title:'Copied entry',username:'fixture',password:'fixture',folderId:'root'},time:new Date().toISOString()});
+  el('toggleCatalog').click();el('catalogAdd').click();el('addFromFile').click();
+  await until(()=>!catalogBusy && el('activeVaultName').textContent==='Копия' && el('enter').textContent==='Открыть','attach local file');
+  el('pin').value='7';el('enter').click();
+  await until(()=>!el('vault').hidden && metal.find('data-entry',id),'unlock attached file');
+  el('toggleCatalog').click();el('catalogAdd').click();el('addFromFile').click();
+  await until(()=>!el('vaultAddChoice').open && !catalogBusy,'select same file again');
+  if(el('catalogRows').children.length!==2 || el('vault').hidden)throw Error('duplicate attachment');
+  return 'PASS existing KeyKeep file, original PIN, entry readback and duplicate selection';
+}
+
 {
   const pane=el('folders'), scroll=pane.querySelector('.folder-scroll'), button=el('showDeleted');
   const filler=document.createElement('div');
@@ -325,7 +337,7 @@ await until(()=>!el('vaultCatalog').inert && el('catalogRows').textContent.inclu
 const context=target=>target.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:50,clientY:110,button:2}));
 context(el('vaultCatalog'));
 if(el('menuCreate').hidden || !el('menuDelete').hidden)throw Error('background menu');
-el('menuCreate').click();
+el('menuCreate').click();el('createBlank').click();
 await until(()=>!catalogBusy && el('activeVaultName').textContent==='Проверка' && el('enter').textContent==='Создать хранилище','new profile');
 const secondFile=el('vaultPath').textContent;
 if(!secondFile.endsWith('/Downloads/Проверка.kk'))throw Error('missing vault path');
