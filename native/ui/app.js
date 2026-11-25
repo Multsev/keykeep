@@ -54,6 +54,8 @@ async function reset(promptOnOpen=false) {
   clearEntryExtras();
   el('folderDialog').close();
   el('confirmDeletion').close();
+  closeCatalogMenu();
+  el('vaultRename').close();
   el('trashQuestion').close();
   el('eraseDialog').close();
   clearDiskPreview();
@@ -90,6 +92,7 @@ function captureWorkspace(){
   return {folder,query:el('search').value,editor,screen:document.body.dataset.screen};
 }
 function setDrawer(open){
+  if(!open)closeCatalogMenu();
   document.body.classList.toggle('drawer-open',open);
   el('toggleCatalog').setAttribute('aria-expanded',String(open));
   el('vaultCatalog').inert=!open;
@@ -103,12 +106,14 @@ async function refreshCatalog(){
   activeVaultId=data.active;rememberWorkspace=data.remembered;
   el('workspaceBar').hidden=el('vaultLocation').hidden=el('rememberLabel').hidden=false;
   el('vaultPath').textContent=data.file;
-  el('revealVaultFile').title='Показать в Finder: '+data.file;
+  el('revealVaultFile').title=data.file;
+  el('revealVaultFile').setAttribute('aria-label','Открыть папку файла '+data.file);
   selectedVault=data.items.find(v=>v.id===data.active);
   el('revealVaultFile').disabled=!selectedVault;
   if(!selectedVault){
     el('vaultPath').textContent='Выберите расположение при создании';
     el('revealVaultFile').title='';
+    el('revealVaultFile').removeAttribute('aria-label');
   }
   el('activeVaultName').textContent=selectedVault?selectedVault.name:'Основное';
   el('workspaceTitle').textContent=el('activeVaultName').textContent;
@@ -139,6 +144,7 @@ async function refreshCatalog(){
         el('trashCancel').focus();
       };
       row.append(trash);
+      row.oncontextmenu=e=>openCatalogMenu(e,v,trash);
     }
     return row;
   }));

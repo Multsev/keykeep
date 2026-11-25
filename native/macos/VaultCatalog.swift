@@ -18,7 +18,9 @@ struct VaultCatalog {
         let fm = FileManager.default
         var result = [[String:String]]()
         if fm.fileExists(atPath: try directory(Self.original).appendingPathComponent("vault.kk").path) {
-            result.append(["id":Self.original, "name":"Основное","file":try file(Self.original).path])
+            let nameFile=try directory(Self.original).appendingPathComponent("name")
+            let name=(try? String(contentsOf:nameFile,encoding:.utf8)) ?? "Основное"
+            result.append(["id":Self.original, "name":name,"file":try file(Self.original).path])
         }
         if fm.fileExists(atPath: profiles.path) {
             let dirs = try fm.contentsOfDirectory(at: profiles, includingPropertiesForKeys:nil)
@@ -42,6 +44,13 @@ struct VaultCatalog {
             return URL(fileURLWithPath:path)
         }
         return dir.appendingPathComponent("vault.kk")
+    }
+
+    func rename(_ id:String, to value:String) throws {
+        let title=value.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !title.isEmpty, title.count<=255, title.rangeOfCharacter(from:.controlCharacters)==nil,
+              try items().contains(where:{$0["id"]==id}) else {throw PlatformFailure()}
+        try title.write(to:directory(id).appendingPathComponent("name"),atomically:true,encoding:.utf8)
     }
 
     func create(at file:URL) throws -> String {

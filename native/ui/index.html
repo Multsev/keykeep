@@ -1,9 +1,15 @@
 <!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; form-action 'none'; base-uri 'none'"><title>KeyKeep</title><link rel="stylesheet" href="app.css">
 <div id="workspaceBar" hidden><button type="button" id="toggleCatalog" aria-controls="vaultCatalog" aria-expanded="true"><span class="drawer-icon" aria-hidden="true"></span> Хранилища</button><span id="workspaceTitle"></span></div>
-<footer id="vaultLocation" hidden><span>Файл</span><button type="button" id="revealVaultFile"><span id="vaultPath"></span><span class="finder-action">Показать в Finder ↗</span></button></footer>
+<footer id="vaultLocation" hidden><span>Файл</span><button type="button" id="revealVaultFile"><span id="vaultPath"></span></button></footer>
 <aside id="vaultCatalog" aria-labelledby="catalogTitle" hidden>
 <div class="catalog-heading"><h2 id="catalogTitle">Хранилища</h2><button type="button" id="catalogAdd" aria-label="Новое хранилище" title="Выбрать имя и расположение хранилища">+</button></div>
 <nav id="catalogRows" aria-label="Выбор хранилища"></nav>
+<div id="catalogMenu" popover role="menu" aria-label="Хранилища" hidden>
+<button type="button" role="menuitem" id="menuCreate">Создать хранилище…</button>
+<button type="button" role="menuitem" id="menuRename">Переименовать…</button>
+<button type="button" role="menuitem" id="menuDelete">Удалить…</button>
+</div>
+<dialog id="vaultRename" aria-labelledby="renameVaultTitle"><form id="renameVaultForm" class="settings-body"><h2 id="renameVaultTitle">Переименовать хранилище</h2><label>Название в списке<input id="vaultDisplayName" required maxlength="255" autocomplete="off"></label><output id="renameVaultError" role="alert"></output><div class="field-actions"><button type="button" id="renameCancel">Отмена</button><button>Сохранить</button></div></form></dialog>
 <template id="vaultTrashButton"><button type="button" class="vault-trash"><svg aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h14M7 5.5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1.5M5 5.5l.7 10.3A1.3 1.3 0 0 0 7 17h6a1.3 1.3 0 0 0 1.3-1.2L15 5.5M8.3 8.5v5.4m3.4-5.4v5.4"/></svg></button></template>
 <dialog id="trashQuestion" aria-labelledby="trashText"><p id="trashText"></p><p id="trashPath"></p><div class="field-actions"><button id="trashCancel" autofocus>Отмена</button><button id="trashConfirm">В Корзину</button></div></dialog>
 <output id="catalogMessage" role="alert"></output></aside>
@@ -62,4 +68,4 @@
 <label>Текущий мастер-PIN<input type="password" id="erasePin" autocomplete="off" required></label>
 <output id="eraseMessage" role="alert"></output>
 <div class="field-actions"><button type="button" id="cancelErase" autofocus>Отмена</button><button id="confirmErase">Удалить хранилище</button></div>
-</form></dialog><dialog id="mcpApproval" aria-labelledby="mcpAction" aria-describedby="mcpDetails"><div class="settings-body"><h2 id="mcpAction"></h2><p id="mcpDetails"></p><div class="field-actions"><button id="mcpDeny" autofocus>Отклонить</button><button id="mcpAllow">Разрешить один раз</button></div></div></dialog><output role="alert" id="message"></output><script src="disk.js"></script><script src="entry.js"></script><script src="app.js"></script><script src="mcp.js"></script></html>
+</form></dialog><dialog id="mcpApproval" aria-labelledby="mcpAction" aria-describedby="mcpDetails"><div class="settings-body"><h2 id="mcpAction"></h2><p id="mcpDetails"></p><div class="field-actions"><button id="mcpDeny" autofocus>Отклонить</button><button id="mcpAllow">Разрешить один раз</button></div></div></dialog><output role="alert" id="message"></output><script src="disk.js"></script><script src="entry.js"></script><script src="catalog-menu.js"></script><script src="app.js"></script><script src="mcp.js"></script></html>

@@ -204,6 +204,14 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             return (try? JSONSerialization.jsonObject(with: Data(String(cString:answer).utf8)) as? [String:Any]) ?? ["error":"Ошибка ответа"]
         }
         if let origin=args["vaultContext"] as? String, origin != activeID {reply(["error":"Выбрано другое хранилище"]);return}
+        if op=="vaultRename" {
+            do {
+                guard let id=args["id"] as? String, let name=args["name"] as? String else {throw PlatformFailure()}
+                try catalog.rename(id,to:name)
+                reply(["value":NSNull()])
+            } catch {reply(["error":"Не удалось сохранить название хранилища"])}
+            return
+        }
         if op=="vaultRevealFile" {
             do {
                 let file=try catalog.file(activeID)
