@@ -48,7 +48,7 @@ function maybePromptFingerprint(){
 window.addEventListener('focus',maybePromptFingerprint);
 document.addEventListener('visibilitychange',maybePromptFingerprint);
 async function reset(promptOnOpen=false) {
-  resetTreeTools();
+  metal.stop();resetTreeTools();
   hideUndo();
   if(window.clearMcp)window.clearMcp();
   pendingAutoUnlock=false;
@@ -70,6 +70,7 @@ async function reset(promptOnOpen=false) {
   el('search').value = ''; el('message').textContent = '';
   setChildren(el('tree')); setChildren(el('rows')); current = null; folder = 'root';
   el('editor').hidden = true; el('vault').hidden = true; el('gate').hidden = false;
+  document.body.classList.remove('metal-sealed');
   el('createPinHint').hidden=true;
   el('access').hidden=true;
   const status=await call('status');
@@ -249,8 +250,8 @@ async function refresh() {
   el('entriesEmpty').textContent=query?'Ничего не найдено':'Пока нет записей';
   el('entriesEmpty').hidden=Boolean(data.entries.length);
   setChildren(el('rows'), ...data.entries.map(e=>{
-    const b=row(e.title,async()=>{rememberDraft();edit(await call('get',{id:e.id}));await refresh();},current && current.id===e.id);
-    b.dataset.folder=e.folderId;b.dataset.entry=e.id;
+    const b=row(e.title,async()=>{const from=metal.bounds(b);rememberDraft();const item=await call('get',{id:e.id});if(el('vault').hidden || document.body.classList.contains('metal-sealed'))return;edit(item);metal.card(from,el('editor'));await refresh();},current && current.id===e.id);
+    b.classList.toggle('metal-match',Boolean(query));b.dataset.folder=e.folderId;b.dataset.entry=e.id;
     if(!window.KeyKeep)makeDraggable(b,{kind:'entry',id:e.id,from:e.folderId});
     const sub=document.createElement('small');sub.textContent=query?[paths.get(e.folderId),e.username].filter(Boolean).join(' · '):e.username;b.append(sub);return b;
   }));
@@ -307,7 +308,7 @@ async function showEntries(){
     catch(error){el('mcpFeedback').textContent=error.message;}
   }
   if(previous){if(previous.editor)edit(previous.editor);screen(previous.screen);}
-  await window.keykeepOAuthReady();await retryOnUnlock();
+  metal.shell(el('vault'),true);await window.keykeepOAuthReady();await retryOnUnlock();
 }
 async function finishLogin(){
   if(!window.KeyKeep)await call('vaultRemember',{enabled:el('rememberVault').checked});
@@ -395,7 +396,7 @@ on('newFolder','submit',async()=>{
   const parent=el('folderCreateDialog').open?folderCreateParent:folder;
   rememberDraft();folder=await call('addFolder',{name:el('folderName').value,parent});selectTrash(false);
   if(!window.KeyKeep)revealBranch(parent);
-  el('folderCreateDialog').close();el('newFolder').reset();current=null;el('editor').hidden=true;screen('entries');await refresh();
+  el('folderCreateDialog').close();el('newFolder').reset();current=null;el('editor').hidden=true;screen('entries');await refresh();metal.birth(metal.find('data-folder',folder),metal.find('data-folder',parent));
 });
 on('add','click',()=>openDraft(folder));
 on('editor','submit',async()=>{
@@ -404,9 +405,10 @@ on('editor','submit',async()=>{
   values.username=formatLogin(values.username);
   values.website=formatWebsite(values.website);
   values.title=values.title.trim();values.note=values.note.trim();
+  const creating=!current.id;
   const id=await call('save',{id:current.id,values,time:new Date().toISOString()});
   if(!current.id)draftMap.delete(current.folderId);
-  edit(await call('get',{id}));await refresh();
+  edit(await call('get',{id}));await refresh();if(creating)metal.birth(metal.find('data-entry',id),metal.find('data-folder',current.folderId));
 });
 for(const id of ['website','note'])el(id).addEventListener('input',updateSiteButton);
 on('openWebsite','click',async()=>{
@@ -416,15 +418,19 @@ on('openWebsite','click',async()=>{
 on('revealPassword','click',()=>{
   const reveal=el('password').type==='password';
   el('password').type=reveal?'text':'password';
-  setPasswordLabel(reveal);
+  setPasswordLabel(reveal);metal.mask(reveal);
 });
 for(const [id,field] of [['copyPassword','password'],['copyUsername','username']]){
-  on(id,'click',async()=>{await call('copyField',{text:el(field).value,protected:field==='password'});el('message').textContent=field==='password'?'Пароль скопирован':'Логин скопирован';});
+  on(id,'click',async()=>{await call('copyField',{text:el(field).value,protected:field==='password'});metal.shine(el(id));el('message').textContent=field==='password'?'Пароль скопирован':'Логин скопирован';});
 }
-on('addField','click',()=>appendField({name:'',value:'',type:'text'}));
-on('generate','click',async()=>{el('password').value=await call('generate');});
-on('lock','click',async()=>{workspaces.clear();await call('lock');await reset();});
-on('search','input',async()=>{screen('entries');await refresh();});
+on('addField','click',()=>metal.form(appendField({name:'',value:'',type:'text'})));
+on('generate','click',async()=>{el('password').value=await call('generate');metal.form(el('password'),'micro');});
+on('lock','click',async()=>{
+  document.body.classList.add('metal-sealed');metal.stop();workspaces.clear();
+  try{await call('lock');await reset();metal.shell(el('gate'),false);}
+  catch(error){await reset();throw error;}
+});
+on('search','input',async()=>{screen('entries');await refresh();if(el('search').value)metal.shine(el('search'));});
 on('back','click',()=>screen(document.body.dataset.screen==='detail'?'entries':'folders'));
 document.addEventListener('keydown',e=>{
   if(el('vault').hidden)return;
@@ -516,7 +522,7 @@ on('deleteFolder','click',()=>confirmFolderRemoval(folder));
 async function confirmFolderRemoval(id){
   const info=await call('folderInfo',{id});
   requestDeletion('Удалить папку «'+info.folder.name+'»?', 'Подпапок: '+(info.folders-1)+' · Записей: '+info.entries,async()=>{
-    await call('deleteFolder',{id,confirmed:true});
+    const rect=metal.bounds(metal.find('data-folder',id));await call('deleteFolder',{id,confirmed:true});metal.remove(rect);
     for(const key of draftMap.keys())if(ancestors(key).includes(id))draftMap.delete(key);
     if(current && ancestors(current.folderId).includes(id)){current=null;el('editor').hidden=true;}
     if(ancestors(folder).includes(id)){folder=info.folder.parentId;screen('folders');}
@@ -536,7 +542,7 @@ on('undoDelete','click',async()=>{
 on('deleteEntry','click',()=>{
   const id=current.id;
   requestDeletion('Удалить запись «'+current.title+'»?', 'Запись вместе с историей переместится в корзину хранилища.',async()=>{
-    const token=await call('deleteEntry',{id,confirmed:true});
+    const rect=metal.bounds(metal.find('data-entry',id));const token=await call('deleteEntry',{id,confirmed:true});metal.remove(rect);
     hideUndo();undoToken=token;el('undoNotice').hidden=false;
     undoTimer=setTimeout(()=>{
       if(undoToken!==token)return;

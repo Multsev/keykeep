@@ -162,6 +162,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
     }
     func applicationDidHide(_ notification: Notification) { lock() }
     @objc func lock() {
+        web?.isHidden = true
         forgetSessions()
         guard let session = session else { return }
         prompt?.invalidate(); prompt = nil
@@ -238,6 +239,11 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
                 DispatchQueue.main.async {reply(["value":true])}
             }
             return
+        }
+        if op=="metalPreference" {
+            let defaults=UserDefaults.standard
+            if let level=args["level"] as? String, ["off","minimal","standard","extended"].contains(level){defaults.set(level,forKey:"metalIntensity")}
+            reply(["value":defaults.string(forKey:"metalIntensity") ?? "standard"]);return
         }
         if op=="collapsedFolders" {
             let key="collapsedFolders."+activeID

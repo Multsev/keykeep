@@ -37,6 +37,7 @@ function updateSiteButton() {
 }
 
 function clearEntryExtras() {
+  for(const liquid of el('customList').querySelectorAll('.metal-gauge>i'))metal.cancel(liquid);
   for (const id of ['customList', 'revisions']) setChildren(el(id));
   el('custom').open = el('history').open = false;
   el('password').type = 'password';
@@ -61,26 +62,34 @@ function appendField(field) {
   }
   type.value = field.type;
   const code = document.createElement('output');
+  const gauge=document.createElement('span'),liquid=document.createElement('i');
+  gauge.className='metal-gauge';gauge.hidden=true;gauge.setAttribute('aria-hidden','true');gauge.append(liquid);
+  const expires=document.createElement('small');expires.className='metal-expiry';
   const show = actionButton('Показать код',async () => {
     const result = await call('totp',{secret:value.value});
+    if(!row.isConnected || el('vault').hidden || document.body.classList.contains('metal-sealed'))return;
     code.textContent = result.code;
+    expires.textContent='до '+new Date(result.validUntil*1000).toLocaleTimeString('ru-RU');
     const generation = String(result.validUntil);
     code.dataset.generation = generation;
-    setTimeout(() => { if(code.dataset.generation===generation) code.textContent=''; },Math.max(0,result.validUntil*1000-Date.now()));
+    const remaining=Math.max(0,result.validUntil*1000-Date.now());
+    gauge.hidden=!metal.strength();liquid.style.transform='scaleX(0)';
+    if(!gauge.hidden)metal.play(liquid,[{transform:'scaleX('+Math.min(1,remaining/30000)+')'},{transform:'scaleX(0)'}],'countdown',false,remaining);
+    setTimeout(() => { if(code.dataset.generation===generation){code.textContent='';gauge.hidden=true;expires.textContent='';} },Math.max(0,result.validUntil*1000-Date.now()));
   });
   const controls = document.createElement('div');
   controls.className='field-actions';
-  controls.append(type,actionButton('Удалить поле',()=>row.remove()),show,code);
+  controls.append(type,actionButton('Удалить поле',()=>{metal.cancel(liquid);metal.remove(metal.bounds(row));row.remove();}),show,code,gauge,expires);
   function syncType() {
-    value.type = type.value==='text'?'text':'password';
+    metal.cancel(liquid);value.type = type.value==='text'?'text':'password';
     show.hidden = type.value!=='oneTimePassword';
-    code.textContent='';
+    code.textContent='';gauge.hidden=true;expires.textContent='';
   }
   type.onchange=syncType;
-  value.oninput=()=>{code.textContent='';};
+  value.oninput=()=>{metal.cancel(liquid);code.textContent='';gauge.hidden=true;expires.textContent='';};
   syncType();
   row.append(name,value,controls);
-  el('customList').append(row);
+  el('customList').append(row);return row;
 }
 
 function collectFields() {

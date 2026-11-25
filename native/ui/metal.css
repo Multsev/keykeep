@@ -1,0 +1,39 @@
+.mac-vaults{
+  --metal-glint:#b9c5ce;--metal-surface:#c3cbd1;--metal-rim:#aab4bb;
+  --metal-selection:#535e69;--metal-text:#fff;--metal-face:#f3f4f5;
+  --micro:150ms;--reflection:.15;
+}
+@media(prefers-color-scheme:dark){
+  .mac-vaults{--metal-glint:#606c77;--metal-surface:#586069;--metal-rim:#737e89;--metal-selection:#46515d;--metal-face:#292c30}
+}
+.mac-vaults #workspaceBar,.mac-vaults #vaultLocation,.mac-vaults #showDeleted{background-color:var(--metal-face)}
+.mac-vaults :is(.tree-line:has([aria-current=true]),nav button[aria-current=true],#showDeleted[aria-current=true]){background:var(--metal-selection);color:var(--metal-text)}
+.mac-vaults .tree-line .tree-name{background:transparent}
+.mac-vaults[data-metal]:not([data-metal=off]) button:not(:disabled):hover{background-image:linear-gradient(115deg,transparent 20%,rgb(255 255 255 / var(--reflection)) 51%,transparent 82%)}
+.mac-vaults[data-metal]:not([data-metal=off]) button:active:not(:disabled){transform:scale(.975);border-radius:.55em}
+.mac-vaults[data-metal]:not([data-metal=off]) button{transition:transform var(--micro) cubic-bezier(.2,.9,.25,1.12)}
+.mac-vaults .drop-target{outline:1px solid var(--metal-rim);background:var(--metal-selection);color:var(--metal-text)}
+.mac-vaults[data-metal]:not([data-metal=off]) .drop-target{transform:scale(1.012);border-radius:.7em}
+.metal-surface,#metal-mask>i,.metal-gauge>i{background:linear-gradient(115deg,var(--metal-rim),var(--metal-surface) 48%,var(--metal-rim));pointer-events:none}
+.metal-surface{position:fixed;z-index:8;transform-origin:top left}
+.metal-password{flex:1 1 7rem;min-width:0;position:relative;display:flex}
+#metal-mask{position:absolute;inset:1px;display:flex;overflow:hidden;border-radius:4px;pointer-events:none}
+#metal-mask>i{flex:1;opacity:0;transform-origin:left}
+#metal-mask>i+i{transform-origin:right}
+.metal-gauge{display:inline-block;width:2.8rem;height:.32rem;border-radius:1rem;overflow:hidden;background:var(--line);vertical-align:middle}
+.metal-gauge>i{display:block;height:100%;transform-origin:left}
+.mac-vaults.metal-sealed :is(#vault,#vaultCatalog,#workspaceBar,#vaultLocation,dialog,#message,.metal-surface){visibility:hidden!important}
+.mac-vaults[data-metal=off],.mac-vaults[data-metal=off] #vaultCatalog{transition:none}
+.mac-vaults .metal-match{box-shadow:inset 2px 0 var(--metal-rim)}
+.metal-settings{display:grid;align-content:start;gap:.7rem;padding:1rem}
+#metal-drag{position:fixed;top:0;left:-200px;padding:.3rem .8rem;border-radius:1em;background:var(--metal-surface);color:var(--ink);border:1px solid var(--metal-rim)}
+.mac-vaults[data-metal=off] .metal-gauge{display:none}
+
+.mac-vaults[data-metal]{transition:none}
+
+.mac-vaults[data-metal=off] *{transition-duration:0s!important;transition-delay:0s!important}
+@media(prefers-reduced-motion:reduce){.mac-vaults *{transition-duration:0s!important;transition-delay:0s!important}}
+
+.metal-expiry{display:none;color:var(--muted)}
+.mac-vaults[data-metal=off] .metal-expiry:not(:empty){display:inline}
+.mac-vaults #access{border-radius:.75rem;box-shadow:inset 0 1px var(--line);padding-block-start:.8rem}

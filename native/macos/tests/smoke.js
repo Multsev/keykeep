@@ -92,6 +92,33 @@ if(benchCount>0){
   if(el('entryPath').textContent!==prefix+'Nested')throw Error('nested entry path');
   el('title').value='Renamed';el('title').dispatchEvent(new Event('input'));
   if(el('entryPath').textContent!==prefix+'Renamed')throw Error('edited entry path');
+  el('generalSettings').click();await until(()=>el('generalDialog').open,'appearance settings');
+  el('metalTab').click();
+  if(el('metalPane').hidden || !el('mcpPane').hidden || !el('accountPane').hidden)throw Error('appearance pane');
+  const select=el('metalIntensity'),original=await call('metalPreference');
+  for(const level of ['off','minimal','extended','standard']){
+    select.value=level;select.dispatchEvent(new Event('change'));
+    if(await call('metalPreference')!==level)throw Error('persist motion mode');
+    if(document.body.dataset.metal!==(matchMedia('(prefers-reduced-motion:reduce)').matches?'off':level))throw Error('motion level');
+  }
+  el('generalClose').click();
+  el('revealPassword').click();
+  if(el('password').type!=='text' || el('metal-mask').textContent)throw Error('metal reveal');
+  el('revealPassword').click();
+  if(el('password').type!=='password')throw Error('instant conceal');
+  const otp=appendField({name:'OTP',type:'oneTimePassword',value:'JBSWY3DPEHPK3PXP'});
+  el('custom').open=true;
+  otp.querySelector('.field-actions button:last-of-type').click();
+  await until(()=>/^\d{6}$/.test(otp.querySelector('output').textContent),'OTP available');
+  if(metal.strength() && otp.querySelector('.metal-gauge').hidden)throw Error('missing OTP countdown');
+  metal.birth(el('title'));
+  if(Array.from(document.querySelectorAll('.metal-surface')).some(n=>n.textContent || n.children.length))throw Error('animation copied content');
+  el('lock').click();
+  if(!document.body.classList.contains('metal-sealed') || getComputedStyle(el('vault')).visibility!=='hidden')throw Error('delayed lock');
+  await until(()=>el('vault').hidden && !el('gate').hidden && !el('access').hidden,'lock finished');
+  await new Promise(resolve=>setTimeout(resolve,800));
+  if(document.querySelector('.metal-surface') || document.getAnimations().some(a=>a.playState==='running'))throw Error('idle motion');
+  await call('metalPreference',{level:original});metal.apply(original);
   return writeTiming;
 }
 if(getComputedStyle(el('detail')).display!=='none' || el('entriesEmpty').hidden || !el('search').hidden)throw Error('empty workspace layout');
@@ -100,7 +127,14 @@ el('searchToggle').click();
 async function pointer(target,right){
   await Promise.race([new Promise(resolve=>requestAnimationFrame(resolve)),new Promise(resolve=>setTimeout(resolve,150))]);
   await Promise.race([Promise.allSettled(document.getAnimations().map(animation=>animation.finished)),new Promise(resolve=>setTimeout(resolve,500))]);
+  // A listing refresh may replace the entire tree while the layout settles.
+  if(!target.isConnected){
+    const id=target.closest('[data-folder]')?.dataset.folder;
+    const replacement=Array.from(el('tree').children).find(line=>line.dataset.folder===id);
+    if(replacement)target=target.matches('.tree-name')?replacement.querySelector('.tree-name'):replacement;
+  }
   const rect=target.getBoundingClientRect();
+  if(!rect.width || !rect.height)throw Error('Invisible pointer target '+target.className);
   await call('testPointer',{x:rect.left+rect.width/2,y:rect.top+rect.height/2,right});
 }
 async function chooseMenu(target,menu,command){

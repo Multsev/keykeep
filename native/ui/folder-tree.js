@@ -61,6 +61,7 @@ function treeLine(f,button,depth,hasChildren,count){
   return line;
 }
 function endDrag(){
+  document.getElementById('metal-drag')?.remove();
   dragItem=null;clearTimeout(hoverTimer);hoverId=null;
   document.querySelectorAll('.drop-target').forEach(node=>node.classList.remove('drop-target'));
 }
@@ -68,6 +69,10 @@ function makeDraggable(node,item){
   node.draggable=true;
   node.ondragstart=e=>{
     dragItem=item;e.dataTransfer.effectAllowed='move';
+    const chip=document.createElement('span');chip.id='metal-drag';chip.textContent=item.kind==='folder'?'Папка':'Запись';
+    chip.setAttribute('aria-hidden','true');document.body.append(chip);
+    e.dataTransfer.setDragImage?.(chip,8,8);
+    metal.form(node,'micro');
     e.dataTransfer.setData('application/x-keykeep-item',item.kind);
   };
   node.ondragend=endDrag;
@@ -81,7 +86,7 @@ async function moveTreeItem(item,to,undo=false){
   if(item.kind==='entry' && current?.id===item.id)current.folderId=to;
   lastMove=undo?null:{kind:item.kind,id:item.id,from:to,to:item.from};
   el('moveNotice').hidden=!lastMove;
-  revealBranch(to);await refresh();
+  revealBranch(to);await refresh();metal.form(metal.find('data-folder',to));
 }
 function chooseDestination(item){
   moveTarget=item;
@@ -114,7 +119,7 @@ function rememberDraft(){
 }
 function openDraft(id){
   if(window.KeyKeep){edit();return;}
-  rememberDraft();edit(draftMap.get(id) || {id:'',folderId:id,customFields:[]});
+  rememberDraft();edit(draftMap.get(id) || {id:'',folderId:id,customFields:[]});metal.birth(el('entryPath'));
 }
 function paintDraft(){
   rememberDraft();
