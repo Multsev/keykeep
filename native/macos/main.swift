@@ -31,6 +31,7 @@ func deviceKey(for path: URL, account:String, replacing: Bool = false) throws ->
 
 final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWithReply, WKNavigationDelegate {
     #if UI_TEST
+    let testClipboard=NSPasteboard.withUniqueName()
     var testRoot: URL?
     var testStarted = false
     #endif
@@ -347,6 +348,10 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
             }
             reply(["value":true]);return
         }
+        if op=="testCopiedConnection" {
+            let expected=core(["op":"mcpConnection"])["value"] as? String
+            reply(["value":expected != nil && testClipboard.string(forType:.string)==expected]);return
+        }
         if op == "testTouchPreflight" {
             reply(["value": ProcessInfo.processInfo.environment["KEYKEEP_TOUCH_PREFLIGHT"] == "1"]);return
         }
@@ -398,7 +403,11 @@ final class Desktop: NSObject, NSApplicationDelegate, WKScriptMessageHandlerWith
         if op == "copyField" {
             guard let state = core(["op":"status"])["value"] as? [String:Any],
                   state["open"] as? Bool == true, let text = args["text"] as? String else {reply(["error":"Хранилище заблокировано"]);return}
+            #if UI_TEST
+            let board=testClipboard
+            #else
             let board = NSPasteboard.general
+            #endif
             let item = NSPasteboardItem()
             item.setString(text, forType:.string)
             let sensitive = args["protected"] as? Bool == true

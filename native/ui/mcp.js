@@ -52,6 +52,8 @@ async function renderMcp(){
   el('mcpState').dataset.running=String(state.running);
   el('mcpToggle').textContent=enabled?'Выключить MCP':'Включить MCP';
   el('mcpControls').hidden=!state.running;
+  el('mcpCopy').disabled=locked;
+  el('mcpCopy').title=locked?'Откройте хранилище для подключения':'Скопировать команду подключения в буфер обмена';
   el('mcpWrite').checked=state.writable;
   el('mcpVault').textContent=locked?'Нет открытого':el('workspaceTitle').textContent;
   showMcpActivity(state);

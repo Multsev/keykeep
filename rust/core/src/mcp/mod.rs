@@ -11,6 +11,8 @@ use std::{sync::mpsc::SyncSender, time::Instant};
 use transport::{Transport, error};
 use uuid::Uuid;
 
+const MCP_PORT: u16 = 8766;
+
 type Result<T> = std::result::Result<T, &'static str>;
 struct Request {
     message: Value,
@@ -154,6 +156,16 @@ impl Server {
 }
 
 impl Session {
+    fn ensure_mcp_token(&mut self) -> Result<&str> {
+        let (pin, v) = self.unlocked.as_ref().ok_or("Хранилище заблокировано")?;
+        if v.mcp_token.is_empty() {
+            let mut next = v.clone();
+            next.mcp_token = random_token()?;
+            self.write(&next, pin)?;
+            self.unlocked.as_mut().unwrap().1 = next;
+        }
+        Ok(&self.unlocked.as_ref().unwrap().1.mcp_token)
+    }
     pub(crate) fn mcp_operation(&mut self, op: &str, r: &Value) -> Result<Value> {
         let (pin, v) = self.unlocked.as_ref().ok_or("Хранилище заблокировано")?;
         match op {
@@ -162,13 +174,8 @@ impl Session {
             ),
             "mcpStart" => {
                 if self.mcp.is_none() {
-                    let transport = Transport::bind(8766)?;
-                    if v.mcp_token.is_empty() {
-                        let mut next = v.clone();
-                        next.mcp_token = random_token()?;
-                        self.write(&next, pin)?;
-                        self.unlocked.as_mut().unwrap().1 = next;
-                    }
+                    let transport = Transport::bind(MCP_PORT)?;
+                    self.ensure_mcp_token()?;
                     self.mcp = Some(Server {
                         transport,
                         requests: 0,
@@ -184,11 +191,14 @@ impl Session {
                 Ok(Value::Null)
             }
             "mcpConnection" => {
-                let server = self.mcp.as_ref().ok_or("MCP выключен")?;
+                let port = self
+                    .mcp
+                    .as_ref()
+                    .map_or(MCP_PORT, |server| server.transport.port());
+                let token = self.ensure_mcp_token()?;
                 Ok(json!(format!(
                     "export KEYKEEP_MCP_TOKEN='{}'\ncodex mcp add keykeep --url 'http://127.0.0.1:{}/mcp' --bearer-token-env-var KEYKEEP_MCP_TOKEN",
-                    v.mcp_token,
-                    server.transport.port()
+                    token, port
                 )))
             }
             "mcpRotate" => {

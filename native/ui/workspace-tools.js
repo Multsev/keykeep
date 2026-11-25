@@ -20,7 +20,11 @@ function installWorkspaceTools(){
   el('searchToggle').hidden=false;el('search').hidden=true;el('settings').hidden=true;
   el('mcpPane').insertBefore(el('mcpSettings').querySelector('.exchange-body'),el('mcpFeedback'));
   el('mcpSettings').hidden=true;
-  el('mcpCopy').textContent='Команда для Codex';
+  const actions=document.createElement('div');
+  actions.className='field-actions';
+  el('mcpToggle').before(actions);
+  actions.append(el('mcpToggle'),el('mcpCopy'));
+  el('mcpCopy').textContent='Скопировать команду для Codex';
   el('securityHeading').textContent='Настройки хранилища';
   el('folderCreateBody').append(el('newFolder'));
   el('folderName').placeholder='Название папки';

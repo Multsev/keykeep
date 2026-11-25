@@ -14,6 +14,7 @@ el('accountClient').value='fixture-public-client';el('accountSave').click();
 await until(()=>el('accountMessage').textContent==='Настройки сохранены','save global account');
 el('accountConnect').click();await until(()=>el('accountMessage').textContent.includes('браузере'),'start global OAuth without vault');
 el('mcpTab').click();await until(()=>el('mcpState').textContent==='Выключен','MCP settings without vault');
+if(!el('mcpCopy').disabled || !el('mcpCopy').getClientRects().length)throw Error('locked copy visibility');
 el('mcpToggle').click();await until(()=>el('mcpState').textContent==='Ожидает открытия хранилища','MCP preference while locked');
 el('generalClose').click();el('emptyCreate').click();
 await until(()=>!catalogBusy && !el('access').hidden && el('activeVaultName').textContent==='Основное','choose folder and name first');
@@ -145,7 +146,11 @@ for(const allow of [false,true]){
   await until(()=>!el('mcpApproval').open,'MCP decision closed');
 }
 await until(()=>el('mcpCount').textContent==='4' && el('mcpClient').textContent==='Codex fixture','live request counter and client');
-el('mcpToggle').click();await until(()=>el('mcpControls').hidden,'MCP stop');el('generalClose').click();
+el('mcpToggle').click();await until(()=>el('mcpControls').hidden,'MCP stop');
+if(el('mcpCopy').disabled || !el('mcpCopy').getClientRects().length)throw Error('copy hidden while stopped');
+el('mcpCopy').click();await until(()=>el('mcpFeedback').textContent.includes('скопирована'),'copy action');
+if(!await call('testCopiedConnection') || (await call('mcpStatus')).running)throw Error('copy without starting server');
+el('generalClose').click();
 if(el('toggleCatalog').getAttribute('aria-expanded')!=='false')throw Error('drawer did not collapse');
 el('toggleCatalog').click();
 await until(()=>!el('vaultCatalog').inert && el('catalogRows').textContent.includes('Основное'),'drawer while unlocked');
