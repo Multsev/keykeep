@@ -3,10 +3,10 @@
 const metal=(()=>{
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   const profiles={
-    off:[0,0],minimal:[.35,.7],standard:[1,1],extended:[1.4,1.2]
+    off:[0,0],minimal:[.35,.7],standard:[1,1],extended:[1.4,1.35]
   };
-  const time={micro:150,normal:245,complex:360,shell:430,launch:560};
-  const viscosity='cubic-bezier(.24,.7,.2,1)', elasticity='cubic-bezier(.2,.9,.25,1.12)';
+  const time={micro:260,normal:520,complex:900,shell:1050,launch:1550};
+  const viscosity='cubic-bezier(.38,.12,.28,.95)', elasticity='cubic-bezier(.2,.9,.25,1.12)';
   const reflection=.18;
   let level='off';
   const motions=new Map(), ghosts=new Set();
@@ -84,9 +84,9 @@ const metal=(()=>{
     const film=layer(track,'metal-film');
     Object.assign(film.style,{left:dest.left-box.left+'px',top:dest.top-box.top+'px',width:dest.width+'px',height:dest.height+'px'});
     transient(film,[
-      {transform:'translateY('+dy+'px) scale(.98,.92)',opacity:.36},
-      {transform:'translateY('+dy*.45+'px) scale(.86,1.15)',opacity:.52,offset:.42},
-      {transform:'none',opacity:.32,offset:.82},
+      {transform:'translateY('+dy+'px) scale(.98,.92)',opacity:.52},
+      {transform:'translateY('+dy*.45+'px) scale(.86,1.15)',opacity:.75,offset:.46},
+      {transform:'none',opacity:.55,offset:.82},
       {transform:'none',opacity:0}
     ],'complex');
     const bead=layer(track,'metal-bead');
@@ -107,6 +107,7 @@ const metal=(()=>{
     transient(layer(host,'metal-wave'),[
       {transform:'translateX(-100%) scaleX(.18)',opacity:0},
       {transform:'translateX(-18%) scaleX(.85)',opacity:.95,offset:.35},
+      {transform:'translateX(44%) scaleX(.7)',opacity:.9,offset:.75},
       {transform:'translateX(120%) scaleX(.3)',opacity:0}
     ],'shell');
   }
@@ -129,12 +130,13 @@ const metal=(()=>{
     transient(band,[
       {transform:'translateX(-50%) scale('+8/reach+',2.4)',opacity:.95},
       {transform:'translateX(-50%) scale(.14,1.6)',opacity:1,offset:.22},
-      {transform:'translateX(-50%) scale(1,.8)',opacity:.9,offset:.74},
+      {transform:'translateX(-50%) scale(1,.9)',opacity:1,offset:.74},
+      {transform:'translateX(-50%) scale(1,.9)',opacity:.96,offset:.85},
       {transform:'translateX(-50%) scale(1,.35)',opacity:0}
     ],'launch');
     for(const side of [-1,1]){
       const tip=layer(bar,'metal-launch metal-launch-tip');
-      const x=side*(reach/2-4);
+      const x=side*(reach/2-7);
       transient(tip,[
         {transform:'translateX(0) scale(.85,1)',opacity:.9},
         {transform:'translateX('+x*.14+'px) scale(1.6,.76)',opacity:1,offset:.22},
