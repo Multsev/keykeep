@@ -25,7 +25,7 @@ fn pump(s: &mut Session, port: u16, token: &str, msg: Value, allow: Option<bool>
     while !worker.is_finished() {
         assert!(Instant::now() < deadline);
         let a = s.call(json!({"op":"mcpPoll"})).unwrap();
-        if !a.is_null() {
+        if a.get("key").is_some() {
             approvals += 1;
             s.call(json!({"op":"mcpDecide","key":a["key"],"allow":allow.expect("unexpected approval")})).unwrap();
         }
@@ -95,6 +95,58 @@ fn loopback_approval_modes_rotation_and_lock() {
         true
     );
     assert_eq!(s.unlocked.as_ref().unwrap().1.entries[0].history.len(), 1);
+    s.call(json!({"op":"mcpMode","enabled":false})).unwrap();
+    s.call(json!({"op":"mcpCreationMode","enabled":true}))
+        .unwrap();
+    let folder = pump(
+        &mut s,
+        port,
+        &token,
+        tool("create_folder", json!({"name":"Session folder"})),
+        None,
+    )
+    .1["result"]["structuredContent"]["id"]
+        .clone();
+    assert!(folder.is_string());
+    let created = pump(
+        &mut s,
+        port,
+        &token,
+        tool(
+            "create_password_entry",
+            json!({"folderId":folder,"title":"New","username":"test","password":"test"}),
+        ),
+        None,
+    )
+    .1;
+    assert!(created["result"]["structuredContent"]["id"].is_string());
+    assert!(
+        pump(
+            &mut s,
+            port,
+            &token,
+            tool("delete_folder", json!({"id":folder})),
+            None
+        )
+        .1
+        .get("error")
+        .is_some()
+    );
+    s.call(json!({"op":"mcpCreationMode","enabled":false}))
+        .unwrap();
+    assert!(
+        pump(
+            &mut s,
+            port,
+            &token,
+            tool("create_folder", json!({"name":"Denied"})),
+            None
+        )
+        .1
+        .get("error")
+        .is_some()
+    );
+    s.call(json!({"op":"mcpMode","enabled":true})).unwrap();
     let mut invoke = |name, args| {
         pump(&mut s, port, &token, tool(name, args), Some(true)).1["result"]["structuredContent"]
             .clone()
@@ -131,6 +183,8 @@ fn loopback_approval_modes_rotation_and_lock() {
     );
     s.call(op("mcpRotate")).unwrap();
     s.call(op("mcpStart")).unwrap();
+    let port = s.mcp.as_ref().unwrap().transport.port();
+    assert_eq!(s.call(op("mcpStatus")).unwrap()["allowCreation"], false);
     assert_eq!(pump(&mut s, port, &token, list, None).0, 401);
     let new_token = s.unlocked.as_ref().unwrap().1.mcp_token.clone();
     let worker = client(port, &new_token, get);
@@ -166,6 +220,7 @@ fn official_client_initializes_and_lists_tools() {
         last_client: None,
         transport,
         writable: false,
+        allow_creation: false,
         approval: None,
     });
     let mut client=Command::new(std::env::var("MCP_PYTHON").expect("set MCP_PYTHON"))

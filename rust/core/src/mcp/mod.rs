@@ -41,9 +41,16 @@ struct Approval {
 pub struct Server {
     transport: Transport,
     writable: bool,
+    allow_creation: bool,
     requests: u64,
     last_client: Option<String>,
     approval: Option<Approval>,
+}
+fn is_create(name: &Value) -> bool {
+    matches!(
+        name.as_str(),
+        Some("create_folder" | "create_password_entry")
+    )
 }
 fn random_token() -> Result<String> {
     let mut key = [0; 32];
@@ -72,7 +79,7 @@ impl Server {
         match &self.approval {
             None => Value::Null,
             Some(a) => {
-                json!({"key":a.key.to_string(),"title":a.title,"previousTitle":a.original.as_ref().map(|e|&e.values.title),"action":if !a.write{"read"}else{"operation"}})
+                json!({"key":a.key.to_string(),"title":a.title,"canAllowCreation":is_create(&a.request.message["params"]["name"]),"previousTitle":a.original.as_ref().map(|e|&e.values.title),"action":if !a.write{"read"}else{"operation"}})
             }
         }
     }
@@ -98,7 +105,7 @@ impl Server {
         }
         let result = match method.unwrap() {
             "initialize" => Ok(
-                json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"KeyKeep","version":"1.0"}}),
+                json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false},"experimental":{"com.max.keykeep/session-creation":{"allowed":self.allow_creation}}},"serverInfo":{"name":"KeyKeep","version":"1.0"}}),
             ),
             "ping" => Ok(json!({})),
             "tools/list" => Ok(tools()),
@@ -124,7 +131,9 @@ impl Server {
                 let title = spec
                     .filter(|t| {
                         let schema = &t["inputSchema"];
-                        (!write || self.writable)
+                        (!write
+                            || self.writable
+                            || self.allow_creation && is_create(&params["name"]))
                             && schema["required"].as_array().unwrap().iter().all(|k| {
                                 args[k.as_str().unwrap()]
                                     .as_str()
@@ -210,17 +219,18 @@ impl Session {
         let (pin, v) = self.unlocked.as_ref().ok_or("Хранилище заблокировано")?;
         match op {
             "mcpStatus" => Ok(
-                json!({"requests":self.mcp.as_ref().map_or(0, |s|s.requests),"client":self.mcp.as_ref().and_then(|s|s.last_client.as_deref()),"running":self.mcp.is_some(),"writable":self.mcp.as_ref().is_some_and(|s|s.writable)}),
+                json!({"requests":self.mcp.as_ref().map_or(0, |s|s.requests),"client":self.mcp.as_ref().and_then(|s|s.last_client.as_deref()),"allowCreation":self.mcp.as_ref().is_some_and(|s|s.allow_creation),"running":self.mcp.is_some(),"writable":self.mcp.as_ref().is_some_and(|s|s.writable)}),
             ),
             "mcpStart" => {
                 if self.mcp.is_none() {
-                    let transport = Transport::bind(MCP_PORT)?;
+                    let transport = Transport::bind(if cfg!(test) { 0 } else { MCP_PORT })?;
                     self.ensure_mcp_token()?;
                     self.mcp = Some(Server {
                         transport,
                         requests: 0,
                         last_client: None,
                         writable: false,
+                        allow_creation: false,
                         approval: None,
                     });
                 }
@@ -252,16 +262,31 @@ impl Session {
             "mcpMode" => {
                 let s = self.mcp.as_mut().ok_or("MCP выключен")?;
                 s.writable = r["enabled"].as_bool().ok_or("Укажите режим записи")?;
+                if !s.writable {
+                    s.allow_creation = false;
+                }
                 if !s.writable && s.approval.as_ref().is_some_and(|a| a.write) {
                     s.approval = None;
                 }
                 Ok(Value::Null)
             }
-            "mcpPoll" => Ok(self
-                .mcp
-                .as_mut()
-                .map(|s| s.poll(v))
-                .unwrap_or(Value::Bool(false))),
+            "mcpCreationMode" => {
+                self.mcp.as_mut().ok_or("MCP выключен")?.allow_creation = r["enabled"]
+                    .as_bool()
+                    .ok_or("Укажите разрешение на создание")?;
+                Ok(Value::Null)
+            }
+            "mcpPoll" => {
+                let Some(server) = self.mcp.as_mut() else {
+                    return Ok(json!(false));
+                };
+                let prompt = server.poll(v);
+                if server.allow_creation && prompt["canAllowCreation"] == true {
+                    return self
+                        .mcp_operation("mcpDecide", &json!({"key":prompt["key"],"allow":true}));
+                }
+                Ok(prompt)
+            }
             "mcpDecide" => {
                 let server = self.mcp.as_mut().ok_or("MCP выключен")?;
                 if !server
@@ -276,6 +301,16 @@ impl Session {
                 let old = args["id"]
                     .as_str()
                     .and_then(|id| v.entries.iter().find(|e| e.id == id));
+                let create = is_create(&a.request.message["params"]["name"]);
+                let writable = server.writable || (create && server.allow_creation);
+                if create
+                    && server.writable
+                    && r["allow"] == true
+                    && r["sessionCreation"] == true
+                    && a.request.expires > Instant::now()
+                {
+                    server.allow_creation = true;
+                }
                 let mut changed = false;
                 let result = if r["allow"] != true || a.request.expires <= Instant::now() {
                     Err(error("Владелец не подтвердил запрос"))
@@ -283,7 +318,7 @@ impl Session {
                     Err(error("Запись изменилась. Повторите запрос"))
                 } else if !a.write {
                     Ok(tool_result(json!(old)))
-                } else if server.writable
+                } else if writable
                     && matches!(
                         a.request.message["params"]["name"].as_str(),
                         Some("create_vault" | "rename_vault" | "delete_vault")
@@ -295,7 +330,7 @@ impl Session {
                         json!({"status":"accepted","completion":"local_application"}),
                     )));
                     return Ok(json!({"vaultAction":action,"name":vault_name}));
-                } else if server.writable
+                } else if writable
                     && matches!(
                         a.request.message["params"]["name"].as_str(),
                         Some(
@@ -328,7 +363,7 @@ impl Session {
                             tool_result(json!({"id":value.as_str().or(id.as_str())}))
                         })
                         .map_err(error)
-                } else if server.writable {
+                } else if writable {
                     if a.request.message["params"]["name"] == "update_password_entry"
                         && old.is_none()
                     {

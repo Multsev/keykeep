@@ -22,9 +22,10 @@ async function pollMcp(generation){
       showMcpActivity(state);
     }
     if(request===false){await renderMcp();return;}
+    if(request && Object.hasOwn(request,"changed")){if(request.changed)await refresh();return;}
     if(!request)closeMcpApproval();
     else if(approvalKey!==request.key){
-      approvalKey=request.key;
+      approvalKey=request.key;el('mcpAllowCreation').hidden=!request.canAllowCreation;
       const read=request.action==='read';
       el('mcpAction').textContent=read?'Передать запись клиенту MCP?':'Разрешить изменение через MCP?';
       el('mcpDetails').textContent=read?'Клиент получит запись «'+request.title+'», включая пароль и историю.':el('workspaceTitle').textContent+' · '+request.title;
@@ -76,7 +77,7 @@ async function renderMcp(){
   el('mcpControls').hidden=!state.running;
   el('mcpCopy').disabled=locked;
   el('mcpCopy').title=locked?'Откройте хранилище для подключения':'Скопировать команду подключения в буфер обмена';
-  el('mcpWrite').checked=state.writable;
+  el('mcpWrite').checked=state.writable;el('mcpSessionCreation').checked=Boolean(state.allowCreation);
   el('mcpVault').textContent=locked?'Нет открытого':el('workspaceTitle').textContent;
   showMcpActivity(state);
   if(state.running && !mcpRunning){mcpRunning=true;pollMcp(++mcpGeneration);}
@@ -104,17 +105,24 @@ el('mcpWrite').addEventListener('change',async()=>{
   catch(error){mcpFeedback(error.message);}
   await renderMcp();
 });
-async function decideMcp(allow){
+el('mcpSessionCreation').onchange=async()=>{
+  try{await call('mcpCreationMode',{enabled:el('mcpSessionCreation').checked});}
+  catch(error){mcpFeedback(error.message);}
+  await renderMcp();
+};
+async function decideMcp(allow,sessionCreation=false){
   if(!approvalKey)return;
   const origin=activeVaultId;
-  const result=await call('mcpDecide',{key:approvalKey,allow});
+  const result=await call('mcpDecide',{key:approvalKey,allow,sessionCreation});
   if(origin!==activeVaultId)return;
   closeMcpApproval();
   if(result.vaultAction==='create_vault')await changeVault('vaultNew',{name:result.name});
   if(result.vaultAction==='rename_vault'){await call('vaultRename',{id:activeVaultId,name:result.name});await refreshCatalog();}
   if(result.vaultAction==='delete_vault')await changeVault('vaultTrash',{id:activeVaultId,confirmed:true});
+  if(sessionCreation)await renderMcp();
   if(result.changed)await refresh();
 }
+on('mcpAllowCreation','click',()=>decideMcp(true,true));
 on('mcpAllow','click',()=>decideMcp(true));
 on('mcpDeny','click',()=>decideMcp(false));
 el('mcpApproval').addEventListener('cancel',e=>{e.preventDefault();el('mcpDeny').click();});
